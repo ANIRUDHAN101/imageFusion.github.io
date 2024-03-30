@@ -1,0 +1,46 @@
+val_images:
+  mean:
+  - 120.65
+  - 115.55
+  - 102.47
+  std:
+  - 69.17
+  - 67.2
+  - 72.54
+train_background_images:
+  mean:
+  - 109.07
+  - 110.63
+  - 107.61
+  std:
+  - 76.72
+  - 71.96
+  - 77.03
+train_images:
+  mean:
+  - 127.13
+  - 122.18
+  - 105.58
+  std:
+  - 67.56
+  - 65.64
+  - 69.93
+train_masks:
+  mean:
+  - 81.76
+  std:
+  - 118.22
+val_background_images:
+  mean:
+  - 114.17
+  - 115.72
+  - 112.39
+  std:
+  - 77.16
+  - 71.12
+  - 76.96
+val_masks:
+  mean:
+  - 88.96
+  std:
+  - 120.48
