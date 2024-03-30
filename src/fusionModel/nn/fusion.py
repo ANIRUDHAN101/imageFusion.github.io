@@ -102,7 +102,7 @@ class MlpBlock(nn.Module):
     bias_init: Callable[[PRNGKey, Shape, Dtype], Array] = nn.initializers.normal(stddev=1e-6)
 
     @nn.compact
-    def __call__(self, inputs, train: bool = True):
+    def __call__(self, inputs, train: bool = False):
         """Applies Transformer MlpBlock module."""
         actual_out_dim = inputs.shape[-1] if self.out_dim is None else self.out_dim
         x = nn.Dense(
@@ -124,7 +124,6 @@ class MlpBlock(nn.Module):
         
         output = nn.Dropout(rate=self.dropout_rate)(output, deterministic=not train)
         return output
-
 
 class DFFN(nn.Module):
     dim :int 
@@ -191,6 +190,7 @@ class FrequencyTransformer(nn.Module):
     dtype: Dtype = jnp.float32
     patch_size: int = 8
     encoder: bool = True
+    mlp:bool = False
 
     @nn.compact
     def __call__(self, inputs, train: bool = False):
@@ -200,29 +200,34 @@ class FrequencyTransformer(nn.Module):
             dim=self.dim,
             heads=self.n_heads,
             dropout_rate=self.attention_dropout_rate,
-            patch_size=self.patch_size
-        )(x)
+            patch_size=self.patch_size,
+        )(x, train=train)
         x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
 
+        if x.shape[-1] == inputs.shape[-1]:
+            inputs = Conv1x1(x.shape[-1])(inputs)
         x = x + inputs
 
         # if using as a decoder
         if not self.encoder:
             x_ff = nn.LayerNorm(dtype=self.dtype)(x)
-            x_ff = DFFN(dim=self.dim)(x)
+            x_ff = DFFN(dim=self.dim)(x, train=train)
             x_ff = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
             x = x + x_ff
-
+        
         # MLP block
-        y = block_images_einops(x, patch_size =  [self.patch_size, self.patch_size])
-        y = nn.LayerNorm(dtype=self.dtype)(y)
-        y = MlpBlock(
-            self.dim,
-            dtype=self.dtype,   
-            dropout_rate=self.dropout_rate
-        )(y, train)
-        y = unblock_images_einops(y, [self.patch_size, self.patch_size], image_height=x.shape[-3], image_width=x.shape[-2])
-        return x + y
+        if self.mlp:
+            y = block_images_einops(x, patch_size =  [self.patch_size, self.patch_size])
+            y = nn.LayerNorm(dtype=self.dtype)(y)
+            y = MlpBlock(
+                self.dim,
+                dtype=self.dtype,   
+                dropout_rate=self.dropout_rate
+            )(y, train)
+            y = unblock_images_einops(y, [self.patch_size, self.patch_size], image_height=x.shape[-3], image_width=x.shape[-2])
+            x = x + y
+
+        return x
     
 class FrequencyFusionBlock(nn.Module):
     hidden_dim: int
@@ -279,13 +284,121 @@ class FrequencyFusionBlock(nn.Module):
         out1 = Conv1x1(1)(out1)
         out2 = Conv1x1(1)(out2)
 
-        out = jnp.stack([out1, out2], axis=-1)
+        out = jnp.concatenate([out1, out2], axis=-1)
         out = nn.activation.softmax(out, axis=-1)
 
         fused_features = v1 * out[:,:,:,0] + v2 * out[:,:,:,1]
 
         return fused_features
 
+class DecoderFusionBlock(nn.Module):
+    head_dim: int
+    no_heads: int
+    levels: int = 3
+    patch_size: int = 8
+
+    @nn.compact
+    def __call__(self, feature1, feature2, train=False):
+        x = Conv1x1(
+            features=feature1.shape[-1]*2,
+            name='conv1x1'
+            )(jnp.concatenate([feature1, feature2], axis=-1))\
+        
+        x = nn.LayerNorm(name='layer_norm')(x)
+        x = FrequencyTransformer(
+            dim=self.head_dim,
+            n_heads=self.no_heads,
+            patch_size=self.patch_size,
+            encoder=False,
+            mlp=True
+        )(x, train)
+        x = Conv1x1(
+            features=feature1.shape[-1],
+            name='conv1x1_2'
+        )(x)
+
+        a, b = x.split(2, axis=-1)
+        output = a + b
+
+        return output
+        
+class ImageFusion(nn.Module):
+    head_dim: int = 8
+    no_heads: int = 8
+    levels: int = 3
+    patch_size: int = 8
+
+    encoder: Type[nn.Module] = partial(
+        FrequencyTransformer,
+        dim=head_dim,
+        n_heads=no_heads,
+        patch_size=patch_size
+    )
+
+    decoder: Type[nn.Module] = partial(
+        FrequencyTransformer,
+        dim=head_dim,
+        n_heads=no_heads,
+        patch_size=patch_size,
+        encoder=False,
+        mlp=True)
+    
+    encoder_fusion: Type[nn.Module] = partial(
+        FrequencyFusionBlock,
+        hidden_dim=head_dim,
+        heads=no_heads,
+        patch_size=patch_size
+    )
+
+    @nn.compact
+    def _call__(self, image1, image2, train=False):
+        
+        image_features = []
+
+        # Encoder part
+        for i in range(self.levels):
+            # extract featues from the images and fuse the featues from the images
+            image1_feature = self.encoder(
+                name=f'encder image 1 level_{i}',
+                )(image1, train)
+                
+            image2_feature = self.encoder(
+                name=f'encder image 2 level_{i}',
+            )(image2, train)
+
+            fused_features = self.encoder_fusion(
+                name=f'fusion block level_{i}',
+            )(image1_feature, image2_feature, train)
+
+            image_features.append(fused_features)
+
+            # downsample the images by 2
+            image1 = ScaleImage(0.5)(image1)
+            image2 = ScaleImage(0.5)(image2)
+
+        # Bottlenext part
+        image_features[-1] = self.encoder(
+            name='bottleck layer',
+            hidden_dim=self.head_dim*self.levels*3
+        )(image_features[-1], train)
+        
+        # Upsample the last feature map from encoder to feed it to the decoder
+        image_features[-1] = ScaleImage(2)(image_features[-1])
+        # Decoder part
+        for i in reversed(range(self.levels-1)):
+            image_features[i] = DecoderFusionBlock(
+                name=f'decoder fusion block level_{i}',
+                head_dim=self.head_dim,
+                no_heads=self.no_heads,
+                patch_size=self.patch_size
+            )(image_features[i], image_features[i+1], train)
+
+            image_features[i] = self.decoder(
+                name=f'decoder level_{i}',
+            )(image_features[i], train)
+
+        return image_features[0]
+        
 
 dffn = FrequencyTransformer(3, 16)
 rng = jax.random.PRNGKey(0)
@@ -293,8 +406,9 @@ state = dffn.init(rng, jnp.ones((1, 512, 512, 3)))
 #state = create_train_state(rng, config, DFFN(3), learning_rate_fn=None)
 #%%
 tabulate_fn = nn.tabulate(
-    Encoder(3, 8, patch_size=8), rng)
-print(tabulate_fn(x))
+    dffn, rng)
+x = jnp.ones((1, 512, 512, 3))
+print(tabulate_fn(x, x))
       #%%
 class ConvBlock(nn.Module):
     dimention : int
