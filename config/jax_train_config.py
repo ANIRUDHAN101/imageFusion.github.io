@@ -5,7 +5,7 @@ def get_default_configs():
     
     config.name = "model transfusion"
     
-    config.image_size = 64
+    config.image_size = 512
     config.keep_checkpoints = 3
     config.level = 1
     config.learning_rate = 0.1

@@ -66,6 +66,7 @@ def create_input_iter(data):
 class TrainState(train_state.TrainState):
     batch_stats: Any
     dynamic_scale: dynamic_scale_lib.DynamicScale
+    key: jax.Array
 
 
 def create_learning_rate_fn(config: ml_collections.ConfigDict, base_learning_rate: float, steps_per_epoch: int):
@@ -89,16 +90,17 @@ def create_learning_rate_fn(config: ml_collections.ConfigDict, base_learning_rat
 
     return schedule_fn
 
-
 def create_train_state(rng, config, model, learning_rate_fn):
-    image_shape = (config.image_size, config.image_size, 3)
+    main_key, params_key, dropout_key = jax.random.split(rng, 3)
+
+    image_shape = (1, config.image_size, config.image_size, 3)
     dtype = get_dtype()
 
     @partial(jax.jit, static_argnames=['train'])
     def init(*args, **kwargs):
         return model.init(*args, **kwargs)
 
-    variables = model.init(rng, image1=jnp.ones(image_shape, dtype), image2=jnp.ones(image_shape, dtype), train=True)
+    variables = model.init(params_key, image1=jnp.ones(image_shape, dtype), image2=jnp.ones(image_shape, dtype), train=True)
     platform = jax.local_devices()[0].platform
     dynamic_scale = None
 
@@ -115,11 +117,11 @@ def create_train_state(rng, config, model, learning_rate_fn):
 
     return TrainState.create(apply_fn=model.apply,
                              params=variables['params'],
+                             key=dropout_key,
                              tx=tx,
                              batch_stats=variables['batch_stats'],
                              dynamic_scale=dynamic_scale,
-                             )
-
+                             ), main_key
 
 def create_checkpoints_manager(config, save_dir):
     async_checkpointer = orbax.checkpoint.AsyncCheckpointer(
@@ -130,21 +132,21 @@ def create_checkpoints_manager(config, save_dir):
         save_dir, async_checkpointer, options)
     return checkpoint_manager
 
-
 def save_checkpoints(state, checkpoint_manager, config):
     ckpt = {'model': state}
     save_args = orbax_utils.save_args_from_target(ckpt)
     checkpoint_manager.save(state.step, ckpt, save_kwargs={'save_args': save_args})
     checkpoint_manager.wait_until_finished()
 
-
 def restore_last_checkpoint(checkpoint_manager):
     step = checkpoint_manager.latest_step()
     state = checkpoint_manager.restore(step)
     return state
 
+@functools.partial(jax.jit, static_argnames=('learning_rate_fn'))
+def train_step(state, batch, learning_rate_fn, dropout_key=None):
+    dropout_train_key = jax.random.fold_in(key=dropout_key, data=state.step)
 
-def train_step(state, batch, learning_rate_fn):
     def loss_fn(params):
         gt_image = batch['image']
         mask = batch['mask']
@@ -157,6 +159,7 @@ def train_step(state, batch, learning_rate_fn):
         },
             image1=image1, image2=image2,
             train=True,
+            rngs={'dropout': dropout_train_key},
             mutable=['batch_stats']
         )
 

@@ -53,17 +53,24 @@ class ScaleImage(nn.Module):
     scale_channel_factor: int = 2
 
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, train: bool = False):
         """Applies the ScaleImage module.
         Args:
             x: input image tensor.
         Returns:
             Output tensor with shape [batch_size, new_height, new_width, num_channels].
         """
-        new_size = (int(x.shape[1] * self.scale_factor), int(x.shape[2] * self.scale_factor))
-        image = nn.image.resize(x, new_size, 'bilinear')
+        new_size = (
+            x.shape[0],                             # batch size
+            int(x.shape[1] * self.scale_factor),    # new height
+            int(x.shape[2] * self.scale_factor),    # new width
+            x.shape[3])                             # number of channels
+        
+        image = jax.image.resize(x, new_size, 'bilinear')
         image = Conv3x3(x.shape[-1])(image)
-        image = Conv3x3(x.shape[-1]//self.scale_channel_factor)(image)
+        image = Conv3x3(x.shape[-1])(image)
+        image = nn.BatchNorm(use_running_average = not train)(image)
+        # image = Conv3x3(x.shape[-1]//self.scale_channel_factor)(image)
         return image
     
 class AddPositionalEmbs(nn.Module):
@@ -113,7 +120,7 @@ class MlpBlock(nn.Module):
             bias_init=self.bias_init
         )(inputs) 
         x = nn.activation.gelu(x)
-        x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
+        x = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(x)
         output = nn.Dense(
             features=actual_out_dim,
             dtype=self.dtype,
@@ -122,7 +129,7 @@ class MlpBlock(nn.Module):
             bias_init=self.bias_init
         )(x)
         
-        output = nn.Dropout(rate=self.dropout_rate)(output, deterministic=not train)
+        output = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(output)
         return output
 
 class DFFN(nn.Module):
@@ -132,18 +139,21 @@ class DFFN(nn.Module):
     ffn_expansion_factor :int = 2
     bias :bool = False
     @nn.compact
-    def __call__(self, x):
+    def __call__(self, x, train: bool = False):
         
         hidden_features = self.ffn_expansion_factor * self.dim
-        x = Conv1x1(hidden_features * 2, use_bias=self.bias)(x)
-        x_patch = x_to_patch(x, patch1=self.patch_size, patch2=self.patch_size)
+        x = Conv1x1(hidden_features * 2 * self.heads, use_bias=self.bias)(x)
+
+        x_patch = x_to_patch(x, patch1=self.patch_size, patch2=self.patch_size, heads=self.heads)
+
         x_patch_fft = jnp.fft.rfft2(x_patch)
         x_patch_fft = patch_to_fft(x_patch_fft, patch1=self.patch_size, patch2=self.patch_size//2+1)
         x_patch_fft = nn.Dense(hidden_features * 2)(x_patch_fft)
         x_patch_fft = fft_to_patch(x_patch_fft, patch1=self.patch_size, patch2=self.patch_size//2+1)
         x_patch = jnp.fft.irfft2(x_patch_fft, s=(self.patch_size, self.patch_size))
-        x = patch_to_x(x_patch, patch1=self.patch_size, patch2=self.patch_size)
-        x1, x2 = nn.Conv(hidden_features *2 , kernel_size=(3,3), padding='SAME', feature_group_count=2)(x).split(2, axis=-1)
+
+        x = patch_to_x(x_patch, patch1=self.patch_size, patch2=self.patch_size, heads = self.heads)
+        x1, x2 = jnp.split(nn.Conv(hidden_features *2 , kernel_size=(3,3), padding='SAME', feature_group_count=2)(x), 2, axis=-1)
         x = nn.activation.gelu(x1) * x2
         x = Conv1x1(self.dim)(x)
         return x
@@ -158,7 +168,7 @@ class FSAS(nn.Module):
     @nn.compact
     def __call__(self, x, train: bool = False):
         hidden = Conv1x1(self.dim * 6 * self.heads, use_bias=self.bias)(x)
-        q, k, v = Conv3x3(self.dim * 6 * self.heads, use_bias=self.bias)(hidden).split(3, axis=-1)
+        q, k, v = jnp.split(Conv3x3(self.dim * 6 * self.heads, use_bias=self.bias)(hidden), 3, axis=-1)
         
         q_patch = x_to_patch(q, patch1=self.patch_size, patch2=self.patch_size, heads=self.heads)
         k_patch = x_to_patch(k, patch1=self.patch_size, patch2=self.patch_size, heads=self.heads)
@@ -176,7 +186,7 @@ class FSAS(nn.Module):
         out = nn.LayerNorm()(out)
         
         output = v * out
-        output = nn.Dropout(rate=self.dropout_rate)(output, deterministic=not train)
+        output = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(output)
         
         output = Conv1x1(self.dim, use_bias=self.bias)(output)
         
@@ -202,9 +212,9 @@ class FrequencyTransformer(nn.Module):
             dropout_rate=self.attention_dropout_rate,
             patch_size=self.patch_size,
         )(x, train=train)
-        x = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
+        x = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(x)
 
-        if x.shape[-1] == inputs.shape[-1]:
+        if x.shape[-1] != inputs.shape[-1]:
             inputs = Conv1x1(x.shape[-1])(inputs)
         x = x + inputs
 
@@ -212,7 +222,7 @@ class FrequencyTransformer(nn.Module):
         if not self.encoder:
             x_ff = nn.LayerNorm(dtype=self.dtype)(x)
             x_ff = DFFN(dim=self.dim)(x, train=train)
-            x_ff = nn.Dropout(rate=self.dropout_rate)(x, deterministic=not train)
+            x_ff = nn.Dropout(rate=self.dropout_rate, deterministic=not train)(x)
             x = x + x_ff
         
         # MLP block
@@ -230,18 +240,18 @@ class FrequencyTransformer(nn.Module):
         return x
     
 class FrequencyFusionBlock(nn.Module):
-    hidden_dim: int
+    dim: int
     bias: bool = False
     heads: int = 0
     patch_size: int = 8
 
     @nn.compact
     def __call__(self, image1, image2, train=False):
-        hidden_features1 = Conv1x1(self.hidden_dim * 6, use_bias=self.bias)(image1)
-        hidden_features2 = Conv1x1(self.hidden_dim * 6, use_bias=self.bias)(image2)
+        hidden_features1 = Conv1x1(self.dim * 6, use_bias=self.bias)(image1)
+        hidden_features2 = Conv1x1(self.dim * 6, use_bias=self.bias)(image2)
 
-        q1, k1, v1 = Conv3x3(self.hidden_dim * 6, use_bias=self.bias)(hidden_features1).split(3, axis=-1)
-        q2, k2, v2 = Conv3x3(self.hidden_dim * 6, use_bias=self.bias)(hidden_features2).split(3, axis=-1)
+        q1, k1, v1 = jnp.split(Conv3x3(self.dim * 6, use_bias=self.bias)(hidden_features1), 3, axis=-1)
+        q2, k2, v2 = jnp.split(Conv3x3(self.dim * 6, use_bias=self.bias)(hidden_features2), 3, axis=-1)
 
         q1_patch = x_to_patch(q1, patch1=self.patch_size, patch2=self.patch_size, heads=self.heads)
         k1_patch = x_to_patch(k1, patch1=self.patch_size, patch2=self.patch_size, heads=self.heads)
@@ -262,10 +272,10 @@ class FrequencyFusionBlock(nn.Module):
         k2_fft = patch_to_fft(k2_fft, patch1=self.patch_size, patch2=self.patch_size//2+1)
 
         # frequency filter takes the necessary freqnecies before corelation
-        q1_fft = nn.Dense(self.hidden_dim * 2)(q1_fft)
-        k1_fft = nn.Dense(self.hidden_dim * 2)(k1_fft)
-        q2_fft = nn.Dense(self.hidden_dim * 2)(q2_fft)
-        k2_fft = nn.Dense(self.hidden_dim * 2)(k2_fft)
+        q1_fft = nn.Dense(self.dim * 2)(q1_fft)
+        k1_fft = nn.Dense(self.dim * 2)(k1_fft)
+        q2_fft = nn.Dense(self.dim * 2)(q2_fft)
+        k2_fft = nn.Dense(self.dim * 2)(k2_fft)
 
         out1 = q1_fft * k2_fft
         out2 = q2_fft * k1_fft
@@ -287,7 +297,9 @@ class FrequencyFusionBlock(nn.Module):
         out = jnp.concatenate([out1, out2], axis=-1)
         out = nn.activation.softmax(out, axis=-1)
 
-        fused_features = v1 * out[:,:,:,0] + v2 * out[:,:,:,1]
+        corelation1, corelation2 = jnp.split(Conv1x1(self.dim * 4, use_bias=False)(out),
+                                             2, axis=-1)
+        fused_features = v1 *corelation1 + v2 * corelation2
 
         return fused_features
 
@@ -317,7 +329,7 @@ class DecoderFusionBlock(nn.Module):
             name='conv1x1_2'
         )(x)
 
-        a, b = x.split(2, axis=-1)
+        a, b = jnp.split(x, 2, axis=-1)
         output = a + b
 
         return output
@@ -345,13 +357,13 @@ class ImageFusion(nn.Module):
     
     encoder_fusion: Type[nn.Module] = partial(
         FrequencyFusionBlock,
-        hidden_dim=head_dim,
+        dim=head_dim,
         heads=no_heads,
         patch_size=patch_size
     )
 
     @nn.compact
-    def _call__(self, image1, image2, train=False):
+    def __call__(self, image1, image2, train=False):
         
         image_features = []
 
@@ -373,19 +385,19 @@ class ImageFusion(nn.Module):
             image_features.append(fused_features)
 
             # downsample the images by 2
-            image1 = ScaleImage(0.5)(image1)
-            image2 = ScaleImage(0.5)(image2)
+            image1 = ScaleImage(0.5)(image1, train=train)
+            image2 = ScaleImage(0.5)(image2, train=train)
 
         # Bottlenext part
         image_features[-1] = self.encoder(
             name='bottleck layer',
-            hidden_dim=self.head_dim*self.levels*3
+            dim=self.head_dim*self.levels*3
         )(image_features[-1], train)
-        
-        # Upsample the last feature map from encoder to feed it to the decoder
-        image_features[-1] = ScaleImage(2)(image_features[-1])
+    
         # Decoder part
         for i in reversed(range(self.levels-1)):
+            print(i)
+            image_features[i+1] = ScaleImage(2)(image_features[i+1], train=train)
             image_features[i] = DecoderFusionBlock(
                 name=f'decoder fusion block level_{i}',
                 head_dim=self.head_dim,
@@ -396,50 +408,51 @@ class ImageFusion(nn.Module):
             image_features[i] = self.decoder(
                 name=f'decoder level_{i}',
             )(image_features[i], train)
+        fused_image = Conv1x1(3)(image_features[0])
 
-        return image_features[0]
+        return fused_image
         
 
-dffn = FrequencyTransformer(3, 16)
-rng = jax.random.PRNGKey(0)
-state = dffn.init(rng, jnp.ones((1, 512, 512, 3)))    
-#state = create_train_state(rng, config, DFFN(3), learning_rate_fn=None)
-#%%
-tabulate_fn = nn.tabulate(
-    dffn, rng)
-x = jnp.ones((1, 512, 512, 3))
-print(tabulate_fn(x, x))
+# dffn = ImageFusion(3, 16)
+# rng = jax.random.PRNGKey(0)
+# state = dffn.init(rng, jnp.ones((1, 512, 512, 3)), jnp.ones((1, 512, 512, 3)))    
+# #state = create_train_state(rng, config, DFFN(3), learning_rate_fn=None)
+# #%%
+# tabulate_fn = nn.tabulate(
+#     dffn, rng, compute_flops=True, compute_vjp_flops=True)
+# x = jnp.ones((32, 512, 512, 3))
+# print(tabulate_fn(x, x))
       #%%
-class ConvBlock(nn.Module):
-    dimention : int
+# class ConvBlock(nn.Module):
+#     dimention : int
 
-    @nn.compact
-    def __call__(self, image, train=False):
-        feature = Conv3x3(self.dimention)(image)
-        feature = nn.activation.gelu(feature)
-        feature = nn.BatchNorm(use_running_average = not train)(feature)
-        return feature
+#     @nn.compact
+#     def __call__(self, image, train=False):
+#         feature = Conv3x3(self.dimention)(image)
+#         feature = nn.activation.gelu(feature)
+#         feature = nn.BatchNorm(use_running_average = not train)(feature)
+#         return feature
 
-class FusionModel(nn.Module):
-    @nn.compact
-    def __call__(self, image1, image2, train=False):
-        feature1 = ConvBlock(16)(image1, train)
-        feature2 = ConvBlock(16)(image2, train)
-        return feature1 + feature2
+# class FusionModel(nn.Module):
+#     @nn.compact
+#     def __call__(self, image1, image2, train=False):
+#         feature1 = ConvBlock(16)(image1, train)
+#         feature2 = ConvBlock(16)(image2, train)
+#         return feature1 + feature2
     
-workdir = '/home/anirudhan/project/fusion/results'
-# checkpoint_manager = create_checkpoints_manager(config, '/content')
-config = get_default_configs()
+# workdir = '/home/anirudhan/project/fusion/results'
+# # checkpoint_manager = create_checkpoints_manager(config, '/content')
+# config = get_default_configs()
 
-rng = jax.random.PRNGKey(0)
+# rng = jax.random.PRNGKey(0)
 
-writer = metric_writers.create_default_writer(
-      logdir=workdir, just_logging=jax.process_index() != 0
-  )
+# writer = metric_writers.create_default_writer(
+#       logdir=workdir, just_logging=jax.process_index() != 0
+#   )
 
-if config.batch_size % jax.device_count() > 0:
-    raise ValueError('Batch size must be divisible by the number of devices')
-local_batch_size = config.batch_size // jax.process_count()
-print(rng)
-#%%
-state = create_train_state(rng, config, FusionModel(), learning_rate_fn=None)
+# if config.batch_size % jax.device_count() > 0:
+#     raise ValueError('Batch size must be divisible by the number of devices')
+# local_batch_size = config.batch_size // jax.process_count()
+# print(rng)
+# #%%
+# state = create_train_state(rng, config, FusionModel(), learning_rate_fn=None)

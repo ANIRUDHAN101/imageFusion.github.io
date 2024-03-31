@@ -5,7 +5,7 @@ simulation_config = get_simulation_config()
 
 def _commom_config():
     cfg = config_dict.ConfigDict()
-    cfg.IMAGE_SIZE = 128
+    cfg.IMAGE_SIZE = 512
     cfg.INPUT_SHAPE = (simulation_config.IMAGE_HEIGHT, 
                        simulation_config.IMAGE_WIDTH, 
                        simulation_config.CHANNELS_IMG)
@@ -15,7 +15,7 @@ def get_train_val_pipeline_config():
     cfg = _commom_config()
     cfg.COMPRESSION = simulation_config.COMPRESSION
     cfg.CROP_PADDING = 32
-    cfg.YAML_FILE_PATH = '/home/anirudhan/project/fusion/config/dataset.yml'
+    cfg.YAML_FILE_PATH = '/home/anirudhan/project/image-fusion/config/dataset.yml'
     return cfg
 
 def get_test_pipeline_config():
@@ -23,5 +23,5 @@ def get_test_pipeline_config():
     # this is the mean and std of real Real Mff dataset
     cfg.MEAN = [81.594,  89.681, 78.611]
     cfg.STD = [71.661, 71.096, 86.162]
-    cfg.FOLDER = '/home/anirudhan/project/fusion/data/RealMFF'
+    cfg.FOLDER = '/home/anirudhan/project/image-fusion/data/RealMFF'
     return cfg

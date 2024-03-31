@@ -12,9 +12,9 @@ def get_simulation_config():
     cfg.PREFETCH_FACTOR = 16
     cfg.PIN_MEMORY = True
     cfg.LOAD_MODEL = True
-    cfg.TRAIN_IMG_DIR = '/home/anirudhan/project/fusion/data/AM_2k/AM-2k'
-    cfg.VAL_IMG_DIR = '/home/anirudhan/project/fusion/data/AM_2k/valSim'
-    cfg.TF_RECORD_DIR = f'/home/anirudhan/project/fusion/data/memmaps/train_images{cfg.NUM_EPOCHS}.tfrecords.gz'
+    cfg.TRAIN_IMG_DIR = '/home/anirudhan/project/image-fusion/data/AM_2k/AM-2k'
+    cfg.VAL_IMG_DIR = '/home/anirudhan/project/image-fusion/data/AM_2k/valSim'
+    cfg.TF_RECORD_DIR = f'/home/anirudhan/project/image-fusion/data/memmaps/train_images{cfg.NUM_EPOCHS}.tfrecords.gz'
 
     cfg.FILTER_SIZE = 3
     cfg.DEVIATION = 20
