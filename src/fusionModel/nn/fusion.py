@@ -6,7 +6,6 @@ import jaxwt as jwt
 from functools import partial
 import flax.linen as nn
 from typing import Any, Callable, Optional, Tuple, Type
-
 #%%
 Array = Any
 PRNGKey = Any
@@ -159,8 +158,8 @@ class FrequencyWeightedDotProduct(nn.Module):
 
     @nn.compact
     def __call__(self, x_patch_fft):
-        x_patch_fft = self.param('fft projection', nn.initializers.xavier_normal(), x_patch_fft.shape, self.dtype) * (x_patch_fft)
-        x_patch_fft = x_patch_fft + self.param('fft projection', nn.initializers.xavier_uniform(), x_patch_fft.shape, self.dtype) 
+        x_patch_fft = self.param('fft projection wight', nn.initializers.xavier_normal(), x_patch_fft.shape, self.dtype) * (x_patch_fft)
+        x_patch_fft = x_patch_fft + self.param('fft projection bias', nn.initializers.xavier_uniform(), x_patch_fft.shape, self.dtype) 
         x_patch_fft = nn.activation.gelu(x_patch_fft)
         return x_patch_fft
     
@@ -169,7 +168,7 @@ class LinearProjection(nn.Module):
 
     Args:
         dim (int): The dimension of the output feature.
-        n_heads (int, optional): The number of attention heads. If None, the output will not have a head dimension. Defaults to None.
+        no_heads (int, optional): The number of attention heads. If None, the output will not have a head dimension. Defaults to None.
         patch_size (int): The size of the patch.
         dtype (Dtype, optional): The data type of the layer's parameters. Defaults to jnp.float32.
         param_dtype (Dtype, optional): The data type of the layer's parameters. Defaults to jnp.float32.
@@ -178,13 +177,13 @@ class LinearProjection(nn.Module):
         bias (bool, optional): Whether to include a bias term. Defaults to False.
 
     Returns:
-        Array: The output tensor after linear projection. If n_heads is None, the shape will be [batch_size, height, width, channels]. Otherwise, the shape will be [batch_size, num_heads, height, width, channels].
+        Array: The output tensor after linear projection. If no_heads is None, the shape will be [batch_size, height, width, channels]. Otherwise, the shape will be [batch_size, num_heads, height, width, channels].
 
     """
 
     dim: int
     patch_size: int
-    n_heads: int = None
+    no_heads: int = None
     dtype: Dtype = jnp.float32
     param_dtype: Dtype = jnp.float32
     kernel_init: Callable[[PRNGKey, Shape, Dtype], Array] = nn.initializers.xavier_uniform()
@@ -193,26 +192,33 @@ class LinearProjection(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        if self.n_heads is None:
+        if self.no_heads is None:
             x = nn.Conv(
-                features=self.dim,
+                features=self.dim*self.patch_size**2,
                 kernel_size=(self.patch_size, self.patch_size),
                 strides=(self.patch_size, self.patch_size),
-                use_bias=self.bias,
-                param_dtype=self.dtype,
                 kernel_init=self.kernel_init,
                 bias_init=self.bias_init
             )(x)
+            x = einops.rearrange(x, 
+                                 "b h w (c p0 p1)-> b (h p0) (w p1) c", 
+                                 p0=self.patch_size, p1=self.patch_size,
+                                 c = self.dim)
             return x
         
         x = nn.Conv(
-            features=self.dim * self.n_heads,
+            features=self.dim * self.no_heads*self.patch_size**2,
             kernel_size=(self.patch_size, self.patch_size),
             strides=(self.patch_size, self.patch_size),
             kernel_init=self.kernel_init,
             bias_init=self.bias_init
         )(x)
-        return einops.rearrange(x, "b h w (c n) -> b n h w c", c=self.dim, n=self.n_heads)
+        x = einops.rearrange(x, 
+                             "b h w (c p0 p1 head)-> b head (h p0) (w p1) c", 
+                             p0=self.patch_size, p1=self.patch_size, 
+                             c=self.dim,
+                             head=self.no_heads)
+        return x
     
 class DFFN(nn.Module):
     dim :int 
@@ -235,15 +241,16 @@ class DFFN(nn.Module):
         x_patch_fft = jnp.fft.rfft2(x_patch)
 
         # this layers extracts the necessary frequencies from the image
-        x_patch_fft = FrequencyWeightedDotProduct('fft weighted dot product')(x_patch_fft)
+        x_patch_fft = FrequencyWeightedDotProduct(name='fft weighted dot product')(x_patch_fft)
 
         x_patch = jnp.fft.irfft2(x_patch_fft, s=(self.patch_size, self.patch_size))
 
         # [batch_size, num_heads, height, width, channels]
         x = patch_to_x(x_patch, patch1=self.patch_size, patch2=self.patch_size, no_heads = self.no_heads)
         x = nn.LayerNorm()(x)
-        x = nn.Dense(self.dim * self.ffn_expansion_factor)(x)
-        x = LinearProjection(self.dim, n_heads=None, patch_size=self.patch_size)(x)
+        #x = nn.Dense(self.dim * self.ffn_expansion_factor)(x)
+        x = einops.rearrange(x, "b head h w c -> b h w (head c)")
+        x = LinearProjection(self.dim, no_heads=None, patch_size=self.patch_size)(x)
         x = nn.activation.gelu(x) + image
         
         return x
@@ -260,9 +267,9 @@ class FSAS(nn.Module):
     def __call__(self, x, train: bool = False):
         # q k and v of dimentiion [batch_size, height, width, channels] is linearly projected to
         # [batch_size, num_heads, height, width, channels]
-        q = LinearProjection(name='q linear projection', dim=self.dim, n_heads=self.no_heads, patch_size=self.patch_size)(x)
-        k = LinearProjection(name='k linear projection', dim=self.dim, n_heads=self.no_heads, patch_size=self.patch_size)(x)
-        v = LinearProjection(name='v linear projection', dim=self.dim, n_heads=self.no_heads, patch_size=self.patch_size)(x)
+        q = LinearProjection(name='q linear projection', dim=self.dim, no_heads=self.no_heads, patch_size=self.patch_size)(x)
+        k = LinearProjection(name='k linear projection', dim=self.dim, no_heads=self.no_heads, patch_size=self.patch_size)(x)
+        v = LinearProjection(name='v linear projection', dim=self.dim, no_heads=self.no_heads, patch_size=self.patch_size)(x)
         
         # for applying fft over the image the image is convrted to pathes and patch dimention is
         # [batch_size, num_heads, height, width, channels] ->
@@ -291,7 +298,8 @@ class FSAS(nn.Module):
 
         # convert the output to dimentions [batch_size, height, width, channels * no_heads] and apply
         # linear projection to get the output of dimentions [batch_size, height, width, channels]
-        output = LinearProjection(name='output linear projection', dim=self.dim, n_heads=None, patch_size=self.patch_size)(output)
+        output = einops.rearrange(output, "b head h w c -> b h w (head c)")
+        output = LinearProjection(name='output linear projection', dim=self.dim, no_heads=None, patch_size=self.patch_size)(output)
         
         return output
     
@@ -353,13 +361,13 @@ class FrequencyFusionBlock(nn.Module):
     @nn.compact
     def __call__(self, image1, image2, train=False):
 
-        q1 = LinearProjection(self.dim, self.no_heads, self.patch_size, dtype=self.dtype)(image1)
-        k1 = LinearProjection(self.dim, self.no_heads, self.patch_size, dtype=self.dtype)(image1)
-        v1 = LinearProjection(self.dim, self.no_heads, self.patch_size, dtype=self.dtype)(image1)
+        q1 = LinearProjection(self.dim, no_heads=self.no_heads, patch_size=self.patch_size, dtype=self.dtype)(image1)
+        k1 = LinearProjection(self.dim, no_heads=self.no_heads, patch_size=self.patch_size, dtype=self.dtype)(image1)
+        v1 = LinearProjection(self.dim, no_heads=self.no_heads, patch_size=self.patch_size, dtype=self.dtype)(image1)
 
-        q2 = LinearProjection(self.dim, self.no_heads, self.patch_size, dtype=self.dtype)(image2)
-        k2 = LinearProjection(self.dim, self.no_heads, self.patch_size, dtype=self.dtype)(image2)
-        v2 = LinearProjection(self.dim, self.no_heads, self.patch_size, dtype=self.dtype)(image2)
+        q2 = LinearProjection(self.dim, no_heads=self.no_heads, patch_size=self.patch_size, dtype=self.dtype)(image2)
+        k2 = LinearProjection(self.dim, no_heads=self.no_heads, patch_size=self.patch_size, dtype=self.dtype)(image2)
+        v2 = LinearProjection(self.dim, no_heads=self.no_heads, patch_size=self.patch_size, dtype=self.dtype)(image2)
 
 
         q1_patch = x_to_patch(q1, patch1=self.patch_size, patch2=self.patch_size, no_heads=self.no_heads)
@@ -381,10 +389,10 @@ class FrequencyFusionBlock(nn.Module):
         # k2_fft = patch_to_fft(k2_fft, patch1=self.patch_size, patch2=self.patch_size//2+1)
 
         # frequency filter takes the necessary freqnecies before corelation
-        q1_patch = FrequencyWeightedDotProduct('fft weighted dot product q1')(q1_fft)
-        k1_patch = FrequencyWeightedDotProduct('fft weighted dot product k1')(k1_fft)
-        q2_patch = FrequencyWeightedDotProduct('fft weighted dot product q2')(q2_fft)
-        k2_patch = FrequencyWeightedDotProduct('fft weighted dot product k2')(k2_fft)
+        q1_patch = FrequencyWeightedDotProduct(name='fft weighted dot product q1')(q1_fft)
+        k1_patch = FrequencyWeightedDotProduct(name='fft weighted dot product k1')(k1_fft)
+        q2_patch = FrequencyWeightedDotProduct(name='fft weighted dot product q2')(q2_fft)
+        k2_patch = FrequencyWeightedDotProduct(name='fft weighted dot product k2')(k2_fft)
 
         out1 = q1_patch * k2_patch
         out2 = q2_patch * k1_patch
@@ -399,20 +407,27 @@ class FrequencyFusionBlock(nn.Module):
 
         out1 = nn.LayerNorm()(out1)
         out2 = nn.LayerNorm()(out2)
-
-        out1 = LinearProjection(1, n_heads=None, patch_size=self.patch_size, dtype=self.dtype)(out1)
-        out2 = LinearProjection(1, n_heads=None, patch_size=self.patch_size, dtype=self.dtype)(out2)
-
+        
+        out1 = einops.rearrange(out1, "b head h w c -> b h w (head c)")
+        out2 = einops.rearrange(out2, "b head h w c -> b h w (head c)")
+        out1 = LinearProjection(self.no_heads, no_heads=None, patch_size=self.patch_size, dtype=self.dtype)(out1)
+        out2 = LinearProjection(self.no_heads, no_heads=None, patch_size=self.patch_size, dtype=self.dtype)(out2)
+        out1 = einops.rearrange(out1, "b h w (head c) -> b head h w c", head=self.no_heads, c=1)
+        out2 = einops.rearrange(out2, "b h w (head c) -> b head h w c", head=self.no_heads, c=1)
+        
         out = jnp.concatenate([out1, out2], axis=-1)
         out = nn.activation.softmax(out, axis=-1)
 
         corelation1, corelation2 = jnp.split(Conv1x1(v1.shape[-1] + v2.shape[-1], use_bias=False)(out), 2, axis=-1)
         fused_features = v1 * corelation1 + v2 * corelation2
-
+        
+        fused_features = einops.rearrange(fused_features, "b head h w c -> b h w (head c)")
+        fused_features = LinearProjection(3, no_heads=None, patch_size=self.patch_size, dtype=self.dtype)(fused_features)
+        
         return fused_features
 
 class FusionBlock(nn.Module):
-    head_dim: int
+    dim: int
     no_heads: int
     levels: int = 3
     patch_size: int = 8
@@ -428,7 +443,7 @@ class FusionBlock(nn.Module):
         
         x = nn.LayerNorm(name='layer_norm')(x)
         x = FrequencyTransformer(
-            dim=self.head_dim,
+            dim=self.dim,
             no_heads=self.no_heads,
             patch_size=self.patch_size,
             encoder=False,
@@ -436,12 +451,13 @@ class FusionBlock(nn.Module):
             dtype=self.dtype
         )(x, train)
         x = Conv1x1(
-            features=feature1.shape[-1],
+            features=self.dim*2,
             name='conv1x1_2',
             param_dtype=self.dtype
         )(x)
 
         a, b = jnp.split(x, 2, axis=-1)
+        a = nn.activation.gelu(a)
         output = a + b
 
         return output
@@ -457,7 +473,7 @@ class EncoderFusionBlock(nn.Module):
     @nn.compact
     def __call__(self, image, train=False):
         frequency_transformer_hypers = {
-            # 'dim': self.dim,
+            'dim': self.dim,
             'no_heads': self.no_heads,
             'patch_size': self.patch_size,
             'dtype': self.dtype,
@@ -465,15 +481,15 @@ class EncoderFusionBlock(nn.Module):
         }
        
         for i in range(self.levels-1):
-            print(frequency_transformer_hypers)
+            print(i)
             image = FrequencyTransformer(
-                f"encoder {i}",
+                name=f"encoder {i}",
                 mlp=False,
                 **frequency_transformer_hypers
             )(image)
 
         image = FrequencyTransformer(
-            f"encoder {self.levels-1}",
+            name=f"encoder {self.levels-1}",
             mlp=True,
             **frequency_transformer_hypers,
         )(image)
@@ -499,20 +515,20 @@ class DencoderFusionBlock(nn.Module):
 
         for i in range(self.levels-1):
             image = FrequencyTransformer(
-                f"encoder {i}",
+                name=f"encoder {i}",
                 mlp=False,
                 **frequency_transformer_hypers
             )(image)
         image = FrequencyTransformer(
-            f"encoder {self.levels-1}",
+            name=f"encoder {self.levels-1}",
             mlp=True,
             **frequency_transformer_hypers,
-        )
+        )(image)
         return image
     
 class ImageFusion(nn.Module):
-    head_dim: int = 8
-    no_heads: int = 8
+    dim: int 
+    no_heads: int 
     stack_levels: int = 3
     downsampling_levels: int = 3
     patch_size: int = 4
@@ -521,12 +537,12 @@ class ImageFusion(nn.Module):
     @nn.compact
     def __call__(self, image1, image2, train=False):
         
-        image_features = []
+        image_features = [None]*self.downsampling_levels
         encoder = [None]*self.downsampling_levels
-        encoder_fusion = [None]*(self.downsampling_levels - 1)
+        encoder_fusion = [None]*self.downsampling_levels
 
         transformer_hypers = {
-            'dim': self.head_dim,
+            'dim': self.dim,
             'no_heads': self.no_heads,
             'patch_size': self.patch_size,
             'dtype': self.dtype,
@@ -543,17 +559,18 @@ class ImageFusion(nn.Module):
             image1_feature = encoder[i](image1, train)
             image2_feature = encoder[i](image2, train)
 
-            if image1_feature[i-1] is not None:
-                encoder_fusion[i] = FusionBlock(f'encoder feature fusion _{i}', **transformer_hypers)
-                image1_feature = encoder_fusion[i](image1_feature[i-1], image1_feature, train)
-                image2_feature = encoder_fusion[i](image2_feature[i-1], image2_feature, train)
+            if image_features[i-1] is not None:
+                encoder_fusion[i] = FusionBlock(name=f'encoder feature fusion _{i}', **transformer_hypers)
+                downscaled_feature = ScaleImage(0.5, dtype=self.dtype)(image_features[i-1])
+                image1_feature = encoder_fusion[i](downscaled_feature, image1_feature, train)
+                image2_feature = encoder_fusion[i](downscaled_feature, image2_feature, train)
 
-            fused_features = self.encoder_fusion(
+            fused_features = FrequencyFusionBlock(
                 name=f'fusion block level_{i}',
                 **transformer_hypers
             )(image1_feature, image2_feature, train)
 
-            image_features.append(fused_features)
+            image_features[i] = fused_features
 
             # downsample the images by 2
             image1 = ScaleImage(0.5, dtype=self.dtype)(image1, train=train)
@@ -567,17 +584,17 @@ class ImageFusion(nn.Module):
         )(image_features[-1], train)
     
         # Decoder part
-        for i in reversed(range(self.downsampling_levels-1)):
-            image_features[i+1] = ScaleImage(2, dtype=self.dtype)(image_features[i+1], train=train)
-            image_features[i] = FusionBlock(
+        for i in reversed(range(1, self.downsampling_levels)):
+            image_features[i] = ScaleImage(2, dtype=self.dtype)(image_features[i], train=train)
+            image_features[i-1] = FusionBlock(
                 name=f'decoder fusion block level_{i}',
                 **transformer_hypers
-            )(image_features[i], image_features[i+1], train)
+            )(image_features[i-1], image_features[i], train)
 
-            image_features[i] = DencoderFusionBlock(
+            image_features[i-1] = DencoderFusionBlock(
                 name=f'decoder level_{i}',
                **transformer_hypers
-            )(image_features[i], train)
+            )(image_features[i-1], train)
 
         fused_image = Conv1x1(3)(image_features[0])
         return fused_image
