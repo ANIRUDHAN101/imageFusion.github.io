@@ -128,7 +128,7 @@ def create_split(
     if not split == 'train':
         ds = ds.repeat()
 
-    ds = ds.prefetch(prefetch)
+    # ds = ds.prefetch(prefetch)
 
     # ds = ds.take(tfrecord_size(dataset)//batch_size) # tf record doesnot contain infomation of dataset size, so manully computed and given
 

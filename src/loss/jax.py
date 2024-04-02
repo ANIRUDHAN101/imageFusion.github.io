@@ -35,3 +35,9 @@ def ssim_loss(image1, image2):
         loss.append(structural_similarity(image1[i], image2[i],
                     channel_axis=2))
     return np.mean(loss)
+
+@jax.jit 
+def fft_loss(predicted, target):
+    predicted = jnp.fft.fft2(predicted)
+    target = jnp.fft.fft2(target)
+    return jnp.mean(jnp.abs(predicted - target))

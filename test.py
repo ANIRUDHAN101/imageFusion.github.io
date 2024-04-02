@@ -40,16 +40,16 @@ config.image_size = 128
 rng = jax.random.PRNGKey(0)
 
 writer = metric_writers.create_default_writer(
-      logdir=workdir, just_logging=jax.process_index() != 0
-  )
+    logdir=workdir, just_logging=jax.process_index() != 0
+)
 
 if config.batch_size % jax.device_count() > 0:
     raise ValueError('Batch size must be divisible by the number of devices')
 local_batch_size = config.batch_size // jax.process_count()
 
 steps_per_epoch = (
-      no_train_samples // config.batch_size
-  )
+    no_train_samples // config.batch_size
+)
 
 if config.no_train_steps <= 0:
     num_steps = int(steps_per_epoch * config.batch_size)
