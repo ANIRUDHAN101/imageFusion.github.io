@@ -3,7 +3,6 @@ import sys
 sys.path.append('/home/anirudhan/project/fusion')
 
 import tensorflow as tf
-import jax
 import tensorflow_datasets as tfds
 import os
 import yaml

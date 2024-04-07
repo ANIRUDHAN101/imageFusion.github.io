@@ -23,6 +23,8 @@ class ImageFusion(nn.Module):
         self,
         image_encoder: ImageEncoderViT,
         mask_decoder: MaskDecoder,
+        depth: int,
+        num_multimask_outputs:int =3,
         pixel_mean: List[float] = [123.675, 116.28, 103.53],
         pixel_std: List[float] = [58.395, 57.12, 57.375],
     ) -> None:
@@ -44,11 +46,21 @@ class ImageFusion(nn.Module):
         self.register_buffer("pixel_mean", torch.Tensor(pixel_mean).view(-1, 1, 1), False)
         self.register_buffer("pixel_std", torch.Tensor(pixel_std).view(-1, 1, 1), False)
 
+        self.upsample = nn.ModuleList()
+
+        for i in range(depth):
+            self.upsample.append(
+                nn.Sequential(
+                    nn.ConvTranspose2d(num_multimask_outputs, num_multimask_outputs, kernel_size=2, stride=2),
+                    nn.GELU(),
+                )
+            )
+       
     @property
     def device(self) -> Any:
         return self.pixel_mean.device
 
-    @torch.no_grad()
+    
     def forward(
         self,
         image1: torch.Tensor,
@@ -63,8 +75,18 @@ class ImageFusion(nn.Module):
         image1_embedding = self.image_encoder(image1)
         image2_embedding = self.image_encoder(image2)
 
-        output = self.mask_decoder(image1_embedding, image2_embedding, multimask_output)
-        return output
+        low_res_masks = self.mask_decoder(image1_embedding, image2_embedding, multimask_output)
+
+        for upsample in self.upsample:
+            low_res_masks = upsample(low_res_masks)
+        mask = low_res_masks
+        # # masks = self.postprocess_masks(
+        # #         low_res_masks,
+        # #         input_size=(self.image_encoder.img_size, self.image_encoder.img_size),
+        # #         original_size=(image1.size(-2), image1.size(-1)),
+        # #     )
+        
+        return mask
 
     def postprocess_masks(
         self,

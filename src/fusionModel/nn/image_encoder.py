@@ -12,7 +12,7 @@ import torch.nn.functional as F
 
 from typing import Optional, Tuple, Type
 
-from common import LayerNorm2d, MLPBlock
+from .common import LayerNorm2d, MLPBlock
 
 
 # This class and its supporting functions below lightly adapted from the ViTDet backbone available at: https://github.com/facebookresearch/detectron2/blob/main/detectron2/modeling/backbone/vit.py # noqa
@@ -398,73 +398,73 @@ class PatchEmbed(nn.Module):
     
 #%%
 
-import torch
+# import torch
 
-from PIL import Image
-from torchvision import transforms
+# from PIL import Image
+# from torchvision import transforms
 
 
-# Load the pre-trained model weights (if applicable)
-model = ImageEncoderViT(img_size=512)  # Load your model weights here
+# # Load the pre-trained model weights (if applicable)
+# model = ImageEncoderViT(img_size=512)  # Load your model weights here
 
-# Define image preprocessing steps
-def preprocess_image(image_path):
-  # Open image
-  image = Image.open(image_path)
+# # Define image preprocessing steps
+# def preprocess_image(image_path):
+#   # Open image
+#   image = Image.open(image_path)
 
-  # Resize (optional)
-  image = image.resize((512, 512))  # Adjust based on model requirements
+#   # Resize (optional)
+#   image = image.resize((512, 512))  # Adjust based on model requirements
 
-  # Convert to tensor
-  image_tensor = transforms.ToTensor()(image).unsqueeze(0)  # Add batch dimension
+#   # Convert to tensor
+#   image_tensor = transforms.ToTensor()(image).unsqueeze(0)  # Add batch dimension
 
-  # Normalize (assuming model expects normalized input)
-  normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-  image_tensor = normalize(image_tensor)
+#   # Normalize (assuming model expects normalized input)
+#   normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+#   image_tensor = normalize(image_tensor)
 
-  return image_tensor
-
-#%%
-# Specify your image path
-image_path = "/home/anirudhan/Pictures/IMG_0809.JPG"
-
-# Preprocess the image
-image_tensor = preprocess_image(image_path)
-
-# Pass the image through the model
-with torch.no_grad():  # Disable gradient calculation for inference
-  model_output = model(image_tensor)
-
-# Process the model output based on your needs (e.g., print features)
-print(model_output.shape)
+#   return image_tensor
 
 #%%
-from mask_decoder import MaskDecoder
-from transformer import TwoWayTransformer
+# # Specify your image path
+# image_path = "/home/anirudhan/Pictures/IMG_0809.JPG"
 
-prompt_embed_dim = 256
+# # Preprocess the image
+# image_tensor = preprocess_image(image_path)
 
-mask_decoder = MaskDecoder( 
-    num_multimask_outputs=3,
-    transformer=TwoWayTransformer(
-        depth=2,
-        embedding_dim=prompt_embed_dim,
-        mlp_dim=2048,
-        num_heads=8
-        ),
+# # Pass the image through the model
+# with torch.no_grad():  # Disable gradient calculation for inference
+#   model_output = model(image_tensor)
+
+# # Process the model output based on your needs (e.g., print features)
+# print(model_output.shape)
+
+# #%%
+# from mask_decoder import MaskDecoder
+# from transformer import TwoWayTransformer
+
+# prompt_embed_dim = 256
+
+# mask_decoder = MaskDecoder( 
+#     num_multimask_outputs=3,
+#     transformer=TwoWayTransformer(
+#         depth=2,
+#         embedding_dim=prompt_embed_dim,
+#         mlp_dim=2048,
+#         num_heads=8
+#         ),
     
-    transformer_dim=prompt_embed_dim,
-    iou_head_depth=3,
-    iou_head_hidden_dim=256,
-        )
+#     transformer_dim=prompt_embed_dim,
+#     iou_head_depth=3,
+#     iou_head_hidden_dim=256,
+#         )
 
-mask = mask_decoder(model_output, model_output, True)
-#%%
-masks = F.interpolate(
-    mask,
-    (512, 512),
-    mode="bilinear",
-    align_corners=False,
-)
-masks = masks[..., : 512, :512]
-masks = F.interpolate(masks, (512,512), mode="bilinear", align_corners=False)
+# mask = mask_decoder(model_output, model_output, True)
+# #%%
+# masks = F.interpolate(
+#     mask,
+#     (512, 512),
+#     mode="bilinear",
+#     align_corners=False,
+# )
+# masks = masks[..., : 512, :512]
+# masks = F.interpolate(masks, (512,512), mode="bilinear", align_corners=False)
