@@ -225,7 +225,7 @@ class DecoderBlock(nn.Module):
         spatial_fused_features = self.spatial_freaquency_extractor(image1_features, image2_features)
 
         if prev_features is not None:
-            assert spatial_fused_features.shape[2:] == prev_features.shape[2:], "Spatial fused features and previous features do not have the same shape."
+            
             spatial_fused_features = torch.cat([spatial_fused_features, prev_features], dim=1)
 
         spatial_fused_features = self.conv_block(spatial_fused_features)
@@ -359,7 +359,7 @@ class SegmentFocus(nn.Module):
         fused_features = None
 
         for i in reversed(range(len(self.feature_dim)-1)):
-            fused_features = self.decoder_blocks[i+1](image1_features[i+1], image2_features[i+1], fused_features)
+            fused_features = self.decoder_blocks[i+1](image1_features[i+1].permute(0, 3, 1, 2), image2_features[i+1].permute(0, 3, 1, 2), fused_features)
         
         # to extract global features from images using aspp
         # image1_features = self.aspp(image1_initial_features[:, self.feature_dim[0]:])
@@ -561,11 +561,11 @@ class CSELayer(nn.Module):
     
 #%%
 # Create an instance of the SegmentFocus model
-model = SegmentFocus(feature_dim=[16, 16], depth=2)
+model = SegmentFocus([16, 192, 384, 768], 8)
 
 # Create a dummy input
-image1 = torch.randn(1, 3, 256, 256)  # Assuming input image size is 256x256
-image2 = torch.randn(1, 3, 256, 256)
+#image1 = torch.randn(1, 3, 256, 256)  # Assuming input image size is 256x256
+#image2 = torch.randn(1, 3, 256, 256)
 
 # Pass the dummy input through the model
 output = model(image1, image2)
