@@ -110,7 +110,7 @@ test_data_iter = map(numpy_to_torch, test_dataset)
 # model
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = SegmentFocus([16, 16, 32, 32], 16)
+model = SegmentFocus([16, 192, 384, 768], 8)
 model = model.to(device)
 opt_model = model
 opt_model = torch.compile(model)
@@ -130,7 +130,7 @@ diffusion_mask_w = 0.5
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # model = SegmentFocus([32, 64, 128], 16)
 # model = GACNFuseNet()
-weight_decay = 0.1
+weight_decay = 0.001
 optimizer = optim.Adam(opt_model.parameters(), lr=0.0001, weight_decay=weight_decay)
 
 # opt_mdodel, optimizer = fabric.setup(opt_mdodel, optimizer)
@@ -143,6 +143,7 @@ grad_acc = 2
 model.train()
 writer = SummaryWriter('/home/anirudhan/project/image-fusion/results/logs')
 CHECKPOINT_PATH = '/home/anirudhan/project/image-fusion/results/checkpoints'
+opt_model.load_state_dict(torch.load('/home/anirudhan/project/image-fusion/results/checkpoints/model_26.pth')['model_state_dict'])
 #%%
 for epoch in range(300):
     train_loss = 0

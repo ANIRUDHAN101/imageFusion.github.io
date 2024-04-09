@@ -27,36 +27,36 @@ import torchvision.transforms as transforms
 
 
 # Open the image using PIL
-image1 = Image.open('/home/anirudhan/Documents/project/fusion/datasets/RealMFF/imageA/012_A.png')
-image2 = Image.open('/home/anirudhan/Documents/project/fusion/datasets/RealMFF/imageB/012_B.png')
-# Define the transformations
-transform = transforms.Compose([
-    transforms.Resize((256, 256)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-])
+# image1 = Image.open('/home/anirudhan/Documents/project/fusion/datasets/RealMFF/imageA/012_A.png')
+# image2 = Image.open('/home/anirudhan/Documents/project/fusion/datasets/RealMFF/imageB/012_B.png')
+# # Define the transformations
+# transform = transforms.Compose([
+#     transforms.Resize((256, 256)),
+#     transforms.ToTensor(),
+#     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+# ])
 
-# Apply the transformations to the image
-image1 = transform(image1).unsqueeze(0)
-image2 = transform(image2).unsqueeze(0)
-#%%
-# forward hooks
-activation = {}
-def getActivation(name):
-    def hook(model, input, output):
-        activation[name] = output.detach()
-    return hook
+# # Apply the transformations to the image
+# image1 = transform(image1).unsqueeze(0)
+# image2 = transform(image2).unsqueeze(0)
+# #%%
+# # forward hooks
+# activation = {}
+# def getActivation(name):
+#     def hook(model, input, output):
+#         activation[name] = output.detach()
+#     return hook
 
-h0 = swin_neck[1].register_forward_hook(getActivation('swin 0'))
-h1 = swin_neck[3].register_forward_hook(getActivation('swin 1'))
-h2 = swin_neck[5].register_forward_hook(getActivation('swin 2'))
-h3 = swin_neck[7].register_forward_hook(getActivation('swin 3'))
-output = swin_neck(image1)
-#%%
-h0.remove()
-h1.remove()
-h2.remove()
-h3.remove()
+# h0 = swin_neck[1].register_forward_hook(getActivation('swin 0'))
+# h1 = swin_neck[3].register_forward_hook(getActivation('swin 1'))
+# h2 = swin_neck[5].register_forward_hook(getActivation('swin 2'))
+# h3 = swin_neck[7].register_forward_hook(getActivation('swin 3'))
+# output = swin_neck(image1)
+# #%%
+# h0.remove()
+# h1.remove()
+# h2.remove()
+# h3.remove()
 #%%
 class EncoderBLock(nn.Module):
     """
@@ -561,14 +561,14 @@ class CSELayer(nn.Module):
     
 #%%
 # Create an instance of the SegmentFocus model
-model = SegmentFocus([16, 192, 384, 768], 8)
+# model = SegmentFocus([16, 192, 384, 768], 8)
 
-# Create a dummy input
-#image1 = torch.randn(1, 3, 256, 256)  # Assuming input image size is 256x256
-#image2 = torch.randn(1, 3, 256, 256)
+# # Create a dummy input
+# #image1 = torch.randn(1, 3, 256, 256)  # Assuming input image size is 256x256
+# #image2 = torch.randn(1, 3, 256, 256)
 
-# Pass the dummy input through the model
-output = model(image1, image2)
+# # Pass the dummy input through the model
+# output = model(image1, image2)
 
-# Print the output
-print(output)
+# # Print the output
+# print(output)
