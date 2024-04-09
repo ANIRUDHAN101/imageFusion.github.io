@@ -12,6 +12,51 @@ from torch import Tensor
 import cv2
 from pytorch_wavelets import DWTForward, DWTInverse # (or import DWT, IDWT)
 from torchvision.transforms.functional import rgb_to_grayscale
+from torchvision import models
+#%%
+swin_transformer = models.swin_t(models.Swin_T_Weights.DEFAULT)
+swin_neck = swin_transformer.features
+#%%
+import cv2
+import torch
+import cv2
+import torch
+from PIL import Image
+import matplotlib.pyplot as plt
+import torchvision.transforms as transforms
+
+
+# Open the image using PIL
+image1 = Image.open('/home/anirudhan/Documents/project/fusion/datasets/RealMFF/imageA/012_A.png')
+image2 = Image.open('/home/anirudhan/Documents/project/fusion/datasets/RealMFF/imageB/012_B.png')
+# Define the transformations
+transform = transforms.Compose([
+    transforms.Resize((256, 256)),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+])
+
+# Apply the transformations to the image
+image1 = transform(image1).unsqueeze(0)
+image2 = transform(image2).unsqueeze(0)
+#%%
+# forward hooks
+activation = {}
+def getActivation(name):
+    def hook(model, input, output):
+        activation[name] = output.detach()
+    return hook
+
+h0 = swin_neck[1].register_forward_hook(getActivation('swin 0'))
+h1 = swin_neck[3].register_forward_hook(getActivation('swin 1'))
+h2 = swin_neck[5].register_forward_hook(getActivation('swin 2'))
+h3 = swin_neck[7].register_forward_hook(getActivation('swin 3'))
+output = swin_neck(image1)
+#%%
+h0.remove()
+h1.remove()
+h2.remove()
+h3.remove()
 #%%
 class EncoderBLock(nn.Module):
     """
@@ -231,10 +276,13 @@ class SegmentFocus(nn.Module):
         self.feature_dim = feature_dim
         self.depth = depth
         self.xfm = DWTForward(J=len(feature_dim), mode='zero', wave='haar')
-
+        
+        swin_transformer = models.swin_t(models.Swin_T_Weights.DEFAULT)
+        self.swin_neck = swin_transformer.features
+        
         # input channel is set to one the encoder takes images as grayscale images 
         self.initial_feature_extractor = EncoderBLock(in_channels = 1, 
-                                                      out_channels=feature_dim[0]*2,
+                                                      out_channels=3*2,
                                                       depth=2,
                                                       downsample=False
                                                       )
@@ -242,13 +290,13 @@ class SegmentFocus(nn.Module):
         self.decoder_blocks = nn.ModuleList()
 
         self.aspp = ASPP(in_channels=feature_dim[0], out_channels=feature_dim[0], dilation_rates=[2, 4, 8])
-
-        for i in range(1, len(feature_dim)):
-            self.encoder_blocks.append(EncoderBLock(in_channels = feature_dim[i-1], 
-                                                    out_channels=feature_dim[i],
-                                                    depth=depth
-                                                    )
-                                        )
+        
+        
+        for i in range(1, 8, 2):
+            self.encoder_blocks.append(nn.Sequential(
+                self.swin_neck[i-1],
+                self.swin_neck[i]
+                ))
             
         self.decoder_blocks.append(DecoderBlock(input_dim = feature_dim[0],
                                                 dim = feature_dim[0],
@@ -291,8 +339,8 @@ class SegmentFocus(nn.Module):
         image2_initial_features = self.initial_feature_extractor(image2_gray)
 
 
-        image1_features = [image1_initial_features[:, :self.feature_dim[0]]]
-        image2_features = [image2_initial_features[:, :self.feature_dim[0]]]
+        image1_features = [image1_initial_features[:, :3]]
+        image2_features = [image2_initial_features[:, :3]]
 
         # image1_features[0] = self.aspp(image1_features[0])
         # image2_features[0] = self.aspp(image2_features[0])
@@ -300,10 +348,14 @@ class SegmentFocus(nn.Module):
         _, dwt_image1 = self.xfm(image1)
         _, dwt_image2 = self.xfm(image2)
         
-        for i in range(len(self.feature_dim)-1):
-            image1_features.append(self.encoder_blocks[i](image1_features[i], dwt_image1[i][:, 0, :, :, :]))
-            image2_features.append(self.encoder_blocks[i](image2_features[i], dwt_image2[i][:, 0, :, :, :]))
+        #for i in range(4):
+        #    image1_features.append(self.encoder_blocks[i](image1_features[i], dwt_image1[i][:, 0, :, :, :]))
+        #    image2_features.append(self.encoder_blocks[i](image2_features[i], dwt_image2[i][:, 0, :, :, :]))
         
+        for i in range(4):
+            image1_features.append(self.encoder_blocks[i](image1_features[i]))
+            image2_features.append(self.encoder_blocks[i](image2_features[i]))
+            
         fused_features = None
 
         for i in reversed(range(len(self.feature_dim)-1)):
