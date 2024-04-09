@@ -23,7 +23,7 @@ from clu import metric_writers
 from clu import periodic_actions
 from config.jax_train_config import get_default_configs
 from utils.train import check_and_replace_nan
-from src.loss.jax import charbonnier_loss, wavelet_loss, ssim_loss, fft_loss
+from loss.train_loss import charbonnier_loss, wavelet_loss, ssim_loss, fft_loss
 import jax.numpy as jnp
 from utils.train import save_plot, denormalize_val_image
 

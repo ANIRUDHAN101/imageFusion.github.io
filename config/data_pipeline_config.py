@@ -5,10 +5,11 @@ simulation_config = get_simulation_config()
 
 def _commom_config():
     cfg = config_dict.ConfigDict()
-    cfg.IMAGE_SIZE = 128
-    cfg.INPUT_SHAPE = (simulation_config.IMAGE_HEIGHT, 
-                       simulation_config.IMAGE_WIDTH, 
-                       simulation_config.CHANNELS_IMG)
+    cfg.IMAGE_SIZE = 512
+    cfg.INPUT_SHAPE = (
+        simulation_config.IMAGE_HEIGHT, 
+        simulation_config.IMAGE_WIDTH, 
+        simulation_config.CHANNELS_IMG)
     return cfg
 
 def get_train_val_pipeline_config():

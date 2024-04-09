@@ -26,14 +26,14 @@ def tfrecord_size(parsed_dataset):
     return total_records
 
 def _parse_function(images):
-  # Parse the input `tf.train.Example` proto using the dictionary above.
+# Parse the input `tf.train.Example` proto using the dictionary above.
     return tf.io.parse_single_example(images, feature_description)
 
 def _reshape(images):
 
-    images = dict(map(lambda item:
-     (item[0],
-        tf.reshape(tf.io.decode_raw(item[1], tf.uint8), cfg.INPUT_SHAPE)),
+    images = dict(
+        map(lambda item:
+        (item[0],tf.reshape(tf.io.decode_raw(item[1], tf.uint8), cfg.INPUT_SHAPE)),
         images.items()))
     return images
 
@@ -60,14 +60,15 @@ def normalize_image(images, split='train'):
 
 def _resize(images):
     images = dict(map(lambda item :
-     (item[0], tf.image.resize(item[1], size=(cfg.IMAGE_SIZE, cfg.IMAGE_SIZE))),
-      images.items()))
+    (item[0], tf.image.resize(item[1], size=(cfg.IMAGE_SIZE, cfg.IMAGE_SIZE))),
+    images.items()))
     return images
 
 def uint8_to_float32(image):
-    images = dict(map(lambda item :
-                      (item[0], tf.image.convert_image_dtype(item[1], dtype=tf.float32)),
-                      image.items()))
+    images = dict(
+        map(lambda item :
+        (item[0], tf.image.convert_image_dtype(item[1], dtype=tf.float32)),
+        image.items()))
     return images
 
 
