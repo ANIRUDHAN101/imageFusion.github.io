@@ -87,8 +87,8 @@ class NormalizeImageBlock(nn.Module):
     
     def forward(self, image):
         image = torch.pow(image, 2)
-        image = F.pad(image, (4,4,4,4,0,0,0,0))
-        image = F.conv2d(image, self.w)
+        #image = F.pad(image, (4,4,4,4,0,0,0,0))
+        image = F.conv2d(image, self.w,  padding=(self.block_size//2, self.block_size//2))
         
         return image
 normalize = NormalizeImageBlock()
@@ -97,7 +97,7 @@ normalize(torch.randn((1,  1, 256, 256)))
 class DTMConvBlock(nn.Module):
     def __init__(self, p=5, block_size=9):
         super().__init__()
-        
+        self.block_size = block_size
         w = []
         for i in range(0, p+1):
             for j in range(0, p-i+1):
@@ -108,7 +108,7 @@ class DTMConvBlock(nn.Module):
         
     def forward(self, image):
         image = image.repeat(1, self.n, 1, 1)
-        image = F.conv2d(image, self.w, groups=self.n)
+        image = F.conv2d(image, self.w, groups=self.n, padding=(self.block_size//2, self.block_size//2))
         return image
 
 dtm = DTMConvBlock()
@@ -124,17 +124,19 @@ class FocusSegmrntation(nn.Module):
         
         self.convBolock1 = nn.Conv2d(in_channels*2, 64, kernel_size=1)
         self.convBolock2 = nn.Conv2d(64, 64, kernel_size=1)
-        self.convFinal = nn.conv2d(64, no_classes, kernel_size=1)
+        self.convFinal = nn.Conv2d(64, no_classes, kernel_size=1)
         
         self.segmenter = nn.Sequential(
-            [self.convBolock1(),
+            self.convBolock1,
              nn.GELU(),
-             self.convBolock2(),
+             self.convBolock2,
              nn.GELU(),
-             self.convFinal(),
-             nn.softmax()])
+             self.convFinal,
+             nn.Softmax(dim=1))
         
     def forward(self, image1, image2):
+        image1 = rgb_to_grayscale(image1)
+        image2 = rgb_to_grayscale(image2)
         #normalize images
         image1 = self.normalize(image1)
         image2 = self.normalize(image2)
@@ -151,7 +153,7 @@ class FocusSegmrntation(nn.Module):
     
 #%%
 # Create an instance of the SegmentFocus model
-model = GACNFuseNet()
+model = FocusSegmrntation()
 
 # Create a dummy input
 #image1 = torch.randn(1, 3, 256, 256)  # Assuming input image size is 256x256
