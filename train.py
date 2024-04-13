@@ -16,7 +16,7 @@ from src.dataPipeline.test import val_data
 from config.data_pipeline_config import get_test_pipeline_config
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
-from src.fusionModel.nn.segment import SegmentFocus
+from src.fusionModel.nn.segment import GACNFuseNet
 from utils.train import convert_grayscale_mask_to_multiclass, mask_to_multiclass, check_and_replace_nan
 from src.loss.train_loss import GALoss
 from torch import optim
@@ -110,7 +110,8 @@ test_data_iter = map(numpy_to_torch, test_dataset)
 # model
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = SegmentFocus([16, 192, 384, 768], 8)
+# model = SegmentFocus([16, 192, 384, 768], 8)
+model = GACNFuseNet()
 model = model.to(device)
 opt_model = model
 opt_model = torch.compile(model)
@@ -143,7 +144,7 @@ grad_acc = 2
 model.train()
 writer = SummaryWriter('/home/anirudhan/project/image-fusion/results/logs')
 CHECKPOINT_PATH = '/home/anirudhan/project/image-fusion/results/checkpoints'
-opt_model.load_state_dict(torch.load('/home/anirudhan/project/image-fusion/results/checkpoints/model_26.pth')['model_state_dict'])
+# opt_model.load_state_dict(torch.load('/home/anirudhan/project/image-fusion/results/checkpoints/model_26.pth')['model_state_dict'])
 #%%
 for epoch in range(300):
     train_loss = 0

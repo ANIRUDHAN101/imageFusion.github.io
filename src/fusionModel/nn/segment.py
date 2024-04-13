@@ -140,7 +140,9 @@ class GACNFuseNet(nn.Module):
         f2_sf = f.conv2d(f2_grad, add_kernel, padding=kernel_padding, groups=c)
 
         # get decision map
-        bimap = torch.sigmoid(1000 * (f1_sf - f2_sf))
+        # bimap = torch.sigmoid(1000 * (f1_sf - f2_sf))
+        bimap = torch.nn.Softmax(dim=1)(f1_sf - f2_sf)
+        # bimap = torch.nn.ReLU()(f1_sf - f2_sf)
         return bimap
     
     def forward(self, img1, img2):
@@ -207,7 +209,7 @@ class SSELayer(nn.Module):
             nn.Conv2d(channel, channel, kernel_size=3, bias=False, padding=[1, 1]),
             nn.Conv2d(channel, channel, kernel_size=3, bias=False, padding=[1, 1]),
             nn.Conv2d(channel, 1, kernel_size=3, bias=False, padding=[1, 1]),
-            nn.Sigmoid(),
+            nn.Softmax(),
         )
 
     def forward(self, x):
