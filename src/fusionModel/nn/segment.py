@@ -140,8 +140,8 @@ class GACNFuseNet(nn.Module):
         f2_sf = f.conv2d(f2_grad, add_kernel, padding=kernel_padding, groups=c)
 
         # get decision map
-        # bimap = torch.sigmoid(1000 * (f1_sf - f2_sf))
-        bimap = torch.nn.Softmax(dim=1)(f1_sf - f2_sf)
+        bimap = torch.sigmoid(1000 * (f1_sf - f2_sf))
+        # bimap = torch.nn.Softmax(dim=1)(f1_sf - f2_sf)
         # bimap = torch.nn.ReLU()(f1_sf - f2_sf)
         return bimap
     
@@ -195,12 +195,12 @@ class GACNFuseNet(nn.Module):
         decision_path_conv3 = self.decision_path_conv3(se_decision_path_conv2)
         se_decision_path_conv3 = self.se_7(decision_path_conv3)
         decision_path_conv4 = self.decision_path_conv4(se_decision_path_conv3)
-        se_decision_path_conv4 = self.se_8(decision_path_conv4)
+        # se_decision_path_conv4 = self.se_8(decision_path_conv4)
         
         # Boundary guided filter
         #output_origin = torch.sigmoid(1000 * se_decision_path_conv4)
         
-        return se_decision_path_conv4
+        return decision_path_conv4
 
 class SSELayer(nn.Module):
     def __init__(self, channel):
@@ -209,7 +209,7 @@ class SSELayer(nn.Module):
             nn.Conv2d(channel, channel, kernel_size=3, bias=False, padding=[1, 1]),
             nn.Conv2d(channel, channel, kernel_size=3, bias=False, padding=[1, 1]),
             nn.Conv2d(channel, 1, kernel_size=3, bias=False, padding=[1, 1]),
-            nn.Softmax(),
+            nn.Sigmoid(),
         )
 
     def forward(self, x):
