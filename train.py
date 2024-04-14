@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 IMAGE_SIZE = 128
-MULTIPLE_BLUR_CHOICES = 20
+MULTIPLE_BLUR_CHOICES = 5
 
 torch.set_float32_matmul_precision('medium')
 train_val_cfg = get_train_val_pipeline_config()
@@ -107,15 +107,16 @@ criterion2 = GALoss().to(device)
 criterion3 = torch.nn.CrossEntropyLoss().to(device)
 grad_acc = 2
 
-model.train()
+
 writer = SummaryWriter('/home/anirudhan/project/image-fusion/results/logs')
 CHECKPOINT_PATH = '/home/anirudhan/project/image-fusion/results/checkpoints'
-# opt_model.load_state_dict(torch.load('/home/anirudhan/project/image-fusion/results/checkpoints/model_26.pth')['model_state_dict'])
+opt_model.load_state_dict(torch.load('/home/anirudhan/project/image-fusion/results/checkpoints/model_72.pth')['model_state_dict'])
+opt_model.train()
 #%%
 for epoch in range(300):
     train_loss = 0
     val_loss = 0
-    model.train()
+    opt_model.train()
     for i, data in enumerate(train_dataloader):
         data['mask'] = check_and_replace_nan(data['mask'])
         # mask = mask_to_one_hot(data['mask'][:,0,:,:]).to(device)
@@ -150,7 +151,7 @@ for epoch in range(300):
 
         if i % train_step == 0 and i != 0: break
 
-    model.eval()
+    opt_model.eval()
     with torch.no_grad():
         for i, data in enumerate(val_data_iter):
             data['mask'] = check_and_replace_nan(data['mask'])

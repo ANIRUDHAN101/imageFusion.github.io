@@ -24,7 +24,7 @@ import torch
 from PIL import Image
 import matplotlib.pyplot as plt
 import torchvision.transforms as transforms
-
+from crfseg import CRF
 
 # Open the image using PIL
 # image1 = Image.open('/home/anirudhan/Documents/project/fusion/datasets/RealMFF/imageA/012_A.png')
@@ -234,17 +234,33 @@ class CSELayer(nn.Module):
         y = self.fc(y).view(b, c, 1, 1)
         return x * y.expand_as(x)
     
+class SegmentPostProcessing(nn.Module):
+    def __init__(self, spatial_dim=2):
+        super(SegmentPostProcessing, self).__init__()
+        model = GACNFuseNet()
+        model = torch.compile(model)
+        model.load_state_dict(torch.load('/home/anirudhan/project/image-fusion/results/checkpoints/model_60.pth')['model_state_dict'])
+        for parm in model.parameters():
+            parm.requires_grad = False
+
+        self.segmentNN = model
+        self.crf = CRF(n_spatial_dims=spatial_dim)
     
-#%%
+    def forward(self, image1, image2):
+        x = self.segmentNN(image1, image2)
+        return self.crf(x)
+    
+#%%:
+
 # Create an instance of the SegmentFocus model
-model = GACNFuseNet()
+# model = SegmentPostProcessing()
 
-# # Create a dummy input
-image1 = torch.randn(1, 3, 256, 256)  # Assuming input image size is 256x256
-image2 = torch.randn(1, 3, 256, 256)
+# # # Create a dummy input
+# image1 = torch.randn(1, 1, 256, 256)  # Assuming input image size is 256x256
+# image2 = torch.randn(1, 1, 256, 256)
 
-# # Pass the dummy input through the model
-output = model(image1, image2)
-
+# # # Pass the dummy input through the model
+# output = model(image1, image2)
+# torch.compile()
 # Print the output
-print(output)
+# print(output)
