@@ -283,7 +283,7 @@ class SegmentFocus(nn.Module):
 
 
         
-    def forward(self, image1, image2):
+    def forward(self, image1, image2, gt_image, gt_mask):
         image1_gray = rgb_to_grayscale(image1)
         image2_gray = rgb_to_grayscale(image2)
         
@@ -326,7 +326,12 @@ class SegmentFocus(nn.Module):
         
         # fused_image = focus_regions*image1 + (1-focus_regions)*image2
         # focus_regions[:,2] = 1 - focus_regions[:,0] - focus_regions[:,1]
-        return focus_regions
+        focus_regions = f.softmax(focus_regions, dim=1)
+        masked_gt_image = gt_image*gt_mask[:,1:2]
+        
+        fused_image = focus_regions[:,0:1]*image1 + focus_regions[:,1:2]*masked_gt_image + focus_regions[:,2:3]*image2
+
+        return fused_image, focus_regions.data
 
 class GACNFuseNet(nn.Module):
     """
@@ -514,9 +519,10 @@ model = SegmentFocus(feature_dim=[16, 16], depth=2)
 # Create a dummy input
 image1 = torch.randn(1, 3, 256, 256)  # Assuming input image size is 256x256
 image2 = torch.randn(1, 3, 256, 256)
-
+gt_image = torch.randn(1, 3, 256, 256)
+gt_mask = torch.randn(1, 3, 256, 256)
 # Pass the dummy input through the model
-output = model(image1, image2)
+output = model(image1, image2, gt_image, gt_mask)
 
 # Print the output
 print(output)

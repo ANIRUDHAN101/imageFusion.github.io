@@ -19,6 +19,7 @@ torch._dynamo.config.suppress_errors = True
 from src.fusionModel.nn.segment import SegmentFocus
 from utils.train import convert_grayscale_mask_to_multiclass, mask_to_multiclass, check_and_replace_nan
 from src.loss.train_loss import GALoss
+from src.loss.losses import FFTLoss, EdgeLoss, MSELoss
 from torch import optim
 from torchvision.utils import make_grid
 
@@ -136,29 +137,32 @@ optimizer = optim.Adam(opt_model.parameters(), lr=0.0001, weight_decay=weight_de
 # opt_mdodel, optimizer = fabric.setup(opt_mdodel, optimizer)
 
 # criterion1 = FusionLoss().to(device)
-criterion2 = GALoss().to(device)
-criterion3 = torch.nn.CrossEntropyLoss().to(device)
+# criterion2 = GALoss().to(device)
+# criterion3 = torch.nn.CrossEntropyLoss().to(device)
+criterion1 = MSELoss().to(device)
+criterion2 = FFTLoss().to(device)
+criterion3 = EdgeLoss().to(device)
 grad_acc = 2
 
-model.train()
+opt_model.train()
 writer = SummaryWriter('/home/anirudhan/project/image-fusion/results/logs')
 CHECKPOINT_PATH = '/home/anirudhan/project/image-fusion/results/checkpoints'
 #%%
 for epoch in range(300):
     train_loss = 0
     val_loss = 0
-    model.train()
+    opt_model.train()
     for i, data in enumerate(train_data_iter):
         data['mask'] = check_and_replace_nan(data['mask'])
         # mask = mask_to_one_hot(data['mask'][:,0,:,:]).to(device)
         mask = mask_to_multiclass(data['mask'], num_classes=3).to(device)
         # mask = data['mask'].to(device)
-        # gt_image = data['image'].to(device)
+        gt_image = data['image'].to(device)
         image1 = data['input_img_1'].to(device)
         image2 = data['input_img_2'].to(device)
         # optimizer.zero_grad()
-        output = opt_model(image1, image2)
-        loss = criterion2(output, mask) + criterion3(output, mask) #+ diffusion_mask_w*criterion2(diffusion_mask, mask[:,2,:,:])
+        output, output_mask = opt_model(image1, image2, gt_image, mask)
+        loss = .3*criterion1(output, gt_image) + .3*criterion2(output, gt_image) + .3*criterion3(output, gt_image) 
         loss.backward()
         # optimizer.step()
         train_loss += loss.item()
@@ -182,23 +186,23 @@ for epoch in range(300):
 
         if i % train_step == 0 and i != 0: break
 
-    model.eval()
+    opt_model.eval()
     with torch.no_grad():
         for i, data in enumerate(val_data_iter):
             data['mask'] = check_and_replace_nan(data['mask'])
             # mask = mask_to_one_hot(data['mask'][:,0,:,:]).to(device)
             mask = mask_to_multiclass(data['mask'], num_classes=3).to(device)
             # mask = data['mask'].to(device)
-            # gt_image = data['image'].to(device)
-            output = opt_model(data['input_img_1'].to(device), data['input_img_2'].to(device))
-            loss = criterion2(output, mask) + criterion3(output, mask) #+ diffusion_mask_w*criterion2(diffusion_mask, mask[:,2,:,:])
+            gt_image = data['image'].to(device)
+            output, output_mask = opt_model(data['input_img_1'].to(device), data['input_img_2'].to(device), gt_image, mask)
+            loss = .3*criterion1(output, gt_image) + .3*criterion2(output, gt_image) + .3*criterion3(output, gt_image)
             val_loss += loss.item()
             if i % val_step == 0 and i != 0: break
     writer.add_scalar('Loss/train', train_loss/train_step, epoch)
     writer.add_scalar('Loss/val', val_loss/val_step, epoch)
     
     # val_visual = make_grid([output[0], mask[0]]).permute(1,2,0).cpu().numpy()
-    val_visual = torch.stack([output[0], mask[0]], dim=0)
+    val_visual = torch.stack([output[0], gt_image[0], output_mask[0], mask[0]], dim=0)
     writer.add_images('val image and predicted images', val_visual, epoch)
 
     print(f"Epoch {epoch+1}, Train Loss: {train_loss/train_step}, Val Loss: {val_loss/val_step}")
