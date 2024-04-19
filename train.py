@@ -107,7 +107,7 @@ train_data_iter = map(numpy_to_torch, numpy_train_data)
 val_data_iter = map(numpy_to_torch, val_dataset)
 
 # model
-start_step = 70
+start_step = 0
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = SegmentFocus([16, 16, 32, 32], 16)
 model = model.to(device)
@@ -124,20 +124,12 @@ grad_acc = 1
 val_step = 5
 diffusion_mask_w = 0.5
 
-# fabric = Fabric(accelerator="auto", strategy="auto", devices=1, precision='16-mixed')
-#tensorboard_logger = TensorBoardLogger(root_dir='/content/lightning_logs')
-# fabric.launch()
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # model = SegmentFocus([32, 64, 128], 16)
 # model = GACNFuseNet()
 weight_decay = 0.0001
 optimizer = optim.Adam(opt_model.parameters(), lr=0.0001, weight_decay=weight_decay)
 
-# opt_mdodel, optimizer = fabric.setup(opt_mdodel, optimizer)
-
-# criterion1 = FusionLoss().to(device)
-# criterion2 = GALoss().to(device)
-# criterion3 = torch.nn.CrossEntropyLoss().to(device)
 criterion1 = MSELoss().to(device)
 criterion2 = FFTLoss().to(device)
 criterion3 = EdgeLoss().to(device)
@@ -171,17 +163,6 @@ for epoch in range(start_step+1, 300):
             optimizer.step()
             optimizer.zero_grad()
 
-        # this code reoves local varibles to clear gpu ram
-        # del loss
-        # del output
-        # del gt_image
-        # del image1
-        # del image2
-        # del mask
-        # del data
-
-        # torch.cuda.empty_cache()
-        # gc.collect()
 
         if i % train_step == 0 and i != 0: break
 
