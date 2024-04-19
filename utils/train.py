@@ -42,8 +42,8 @@ def convert_grayscale_mask_to_multiclass(grayscale_mask, num_classes):
 
 def mask_to_multiclass(grayscale_image, num_classes=3):
     """ Convert grayscale mask to multi-class mask with channels."""    
-    lower_bound = .1
-    upper_bound = .9
+    lower_bound = .0001
+    upper_bound = .9999
 
     mask_below = (grayscale_image < lower_bound).float()
     condition_within = (grayscale_image >= lower_bound) & (grayscale_image <= upper_bound)
@@ -72,3 +72,18 @@ def check_and_replace_nan(tensor):
     else:
         # No NaN values found, return the original tensor
         return tensor
+
+def torch_dilate(image, kernel_size):
+    kernel = torch.ones(kernel_size).to(image.device)
+    # Calculate effective padding to compensate for dilation
+    dilation = kernel.size(-1) // 2, kernel.size(-2) // 2
+    effective_padding =  dilation[0], dilation[1]
+    
+    # Perform convolution with max pooling to achieve dilation
+    dilated_image = torch.nn.functional.conv2d(
+        image, weight=torch.ones_like(kernel),
+        padding=effective_padding,
+        stride=1,
+    )
+    dilated_image = torch.nn.functional.max_pool2d(dilated_image, kernel_size=1)
+    return dilated_image

@@ -12,7 +12,6 @@ import torch
 from src.dataPipeline.train_val import create_split
 from config.data_pipeline_config import get_train_val_pipeline_config
 from utils.data import save_data_plots
-from src.dataPipeline.test import val_data 
 from config.data_pipeline_config import get_test_pipeline_config
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
@@ -28,6 +27,8 @@ from torch.utils.tensorboard import SummaryWriter
 IMAGE_SIZE = 128
 
 torch.set_float32_matmul_precision('medium')
+torch.backends.cudnn.benchmark = True
+
 train_val_cfg = get_train_val_pipeline_config()
 
 options = tf.data.Options()
@@ -54,8 +55,6 @@ save_data_plots(train_dataset, output_folder, split,no_samples=1)
 
 test_cfg = get_test_pipeline_config()
 
-test_dataset= val_data('/home/anirudhan/project/image-fusion/data/RealMFF/data.csv', batch_size=2).as_numpy_iterator()
-save_data_plots(test_dataset, output_folder, 'test', no_samples=4)
 
 # dataloader 
 
@@ -106,15 +105,15 @@ train_data_iter = map(numpy_to_torch, numpy_train_data)
 
 
 val_data_iter = map(numpy_to_torch, val_dataset)
-test_data_iter = map(numpy_to_torch, test_dataset)
 
 # model
-
+start_step = 70
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 model = SegmentFocus([16, 16, 32, 32], 16)
 model = model.to(device)
 opt_model = model
 opt_model = torch.compile(model)
+opt_model.load_state_dict(torch.load(f'/home/anirudhan/project/image-fusion/results/checkpoints/model_{start_step}.pth')['model_state_dict'])
 # dummpy_out = model(torch.randn((1,3,12
 
 # Training
@@ -131,7 +130,7 @@ diffusion_mask_w = 0.5
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 # model = SegmentFocus([32, 64, 128], 16)
 # model = GACNFuseNet()
-weight_decay = 0.1
+weight_decay = 0.0001
 optimizer = optim.Adam(opt_model.parameters(), lr=0.0001, weight_decay=weight_decay)
 
 # opt_mdodel, optimizer = fabric.setup(opt_mdodel, optimizer)
@@ -148,7 +147,7 @@ opt_model.train()
 writer = SummaryWriter('/home/anirudhan/project/image-fusion/results/logs')
 CHECKPOINT_PATH = '/home/anirudhan/project/image-fusion/results/checkpoints'
 #%%
-for epoch in range(300):
+for epoch in range(start_step+1, 300):
     train_loss = 0
     val_loss = 0
     opt_model.train()

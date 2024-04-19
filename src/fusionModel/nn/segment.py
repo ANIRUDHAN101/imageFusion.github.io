@@ -12,6 +12,7 @@ from torch import Tensor
 import cv2
 from pytorch_wavelets import DWTForward, DWTInverse # (or import DWT, IDWT)
 from torchvision.transforms.functional import rgb_to_grayscale
+from .guided_filter import GuidedFilter
 #%%
 class EncoderBLock(nn.Module):
     """
@@ -63,8 +64,7 @@ class EncoderBLock(nn.Module):
         # Handle varying input feature dimensions
         if features is not None:
             if features.shape[2:] != image.shape[2:]:
-                # Implement logic for handling different feature dimensions (e.g., separate convolution branch)
-                raise ValueError("Input feature and image shapes do not match.")
+                features = f.interpolate(features, size=image.shape[2:], mode='bilinear')
             x = torch.cat([features, image], dim=1)
         else:
             x = image
@@ -180,7 +180,8 @@ class DecoderBlock(nn.Module):
         spatial_fused_features = self.spatial_freaquency_extractor(image1_features, image2_features)
 
         if prev_features is not None:
-            assert spatial_fused_features.shape[2:] == prev_features.shape[2:], "Spatial fused features and previous features do not have the same shape."
+            if spatial_fused_features.shape[2:] != prev_features.shape[2:]:
+                spatial_fused_features = f.interpolate(spatial_fused_features, size=prev_features.shape[2:], mode='bilinear')
             spatial_fused_features = torch.cat([spatial_fused_features, prev_features], dim=1)
 
         spatial_fused_features = self.conv_block(spatial_fused_features)
@@ -276,6 +277,18 @@ class SegmentFocus(nn.Module):
             # nn.Sigmoid()
         )
 
+        self.self_guideding_filter_layer = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.GELU(),
+            nn.Conv2d(64, 64, kernel_size=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.GELU(),
+            nn.Conv2d(64, 3, kernel_size=1),
+        )
+
+        self.guided_filter = GuidedFilter(10, 0.1)
+
         # self.output_conv_d = nn.Sequential(
         #     nn.Conv2d(1, 1, kernel_size=1, padding=0),
         #     nn.Sigmoid()
@@ -327,6 +340,10 @@ class SegmentFocus(nn.Module):
         # fused_image = focus_regions*image1 + (1-focus_regions)*image2
         # focus_regions[:,2] = 1 - focus_regions[:,0] - focus_regions[:,1]
         focus_regions = f.softmax(focus_regions, dim=1)
+        g = self.self_guideding_filter_layer(focus_regions)
+        focus_regions = self.guided_filter(g, focus_regions)
+        focus_regions = torch.clamp(focus_regions, 0, 1)
+
         masked_gt_image = gt_image*gt_mask[:,1:2]
         
         fused_image = focus_regions[:,0:1]*image1 + focus_regions[:,1:2]*masked_gt_image + focus_regions[:,2:3]*image2

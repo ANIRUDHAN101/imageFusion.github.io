@@ -1,50 +1,86 @@
 #%%
 import sys
 sys.path.append('/home/anirudhan/project/fusion')
-
-import tensorflow as tf
-import tensorflow_datasets as tfds
 import os
-import yaml
-import  albumentations as A
-import pandas as pd
-import os
-from functools import partial
-from config.data_pipeline_config import get_test_pipeline_config
+from torch.utils.data import Dataset
+from torchvision import transforms
+import cv2
 
-cfg = get_test_pipeline_config()
 
-def decode_imges(images):
-    imaegs = dict(map(lambda item:
-                   (item[0], tf.io.decode_jpeg(item[1], channels=3)),
-                   images.items()))
-    return imaegs
+class MFI_Dataset(Dataset):
+    def __init__(self, datasetPath, phase, use_dataTransform, resize, imgSzie):
+        super(MFI_Dataset, self).__init__()
+        self.datasetPath = datasetPath
+        self.phase = phase
+        self.use_dataTransform = use_dataTransform
+        self.resize = resize
+        self.imgSzie = imgSzie
 
-def resize_imges(images):
-    images = dict(map(lambda item:
-                   (item[0], tf.image.resize(item[1], [cfg.IMAGE_SIZE, cfg.IMAGE_SIZE])),
-                   images.items()))
-    return images
+        self.transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Lambda(lambda t: (t * 2) - 1)])
 
-def load_pathes(file_paths):
-    images = dict(map(lambda item:
-                (item[0],  tf.io.read_file(item[1])),
-                file_paths.items()))
-    return images
+    def __len__(self):
+        dirsName = os.listdir(self.datasetPath)
+        assert len(dirsName) >= 2, "Please check that the dataset is formatted correctly."
+        dirsPath = os.path.join(self.datasetPath, dirsName[0])
+        return len(os.listdir(dirsPath))
 
-def normalize_val_image(images):
+    def __getitem__(self, index):
+        if self.phase == "train":
+            # source image1
+            sourceImg1_dirPath = os.path.join(self.datasetPath, "source_1")
+            sourceImg1_names = os.listdir(sourceImg1_dirPath)
+            sourceImg1_names.sort()
+            sourceImg1_path = os.path.join(sourceImg1_dirPath, sourceImg1_names[index])
+            sourceImg1 = cv2.imread(sourceImg1_path)
 
-    def normalize(image):
-        image -= tf.constant(cfg.MEAN, shape=[1, 1, 3], dtype=image.dtype)
-        image /= tf.constant(cfg.STD, shape=[1, 1, 3], dtype=image.dtype)
-        return image
+            # source image2
+            sourceImg2_dirPath = os.path.join(self.datasetPath, "source_2")
+            sourceImg2_names = os.listdir(sourceImg2_dirPath)
+            sourceImg2_names.sort()
+            sourceImg2_path = os.path.join(sourceImg2_dirPath, sourceImg2_names[index])
+            sourceImg2 = cv2.imread(sourceImg2_path)
 
-    images = dict(map(lambda item:(item[0], normalize(item[1]) ), images.items()))
-    return images
+            # full_clear image
+            clearImg_dirPath = os.path.join(self.datasetPath, "full_clear")
+            clearImg_names = os.listdir(clearImg_dirPath)
+            clearImg_names.sort()
+            clearImg_path = os.path.join(clearImg_dirPath, clearImg_names[index])
+            clearImg = cv2.imread(clearImg_path)
 
-def val_data(file_path, batch_size=32):
-    df = pd.read_csv(file_path)
-    for column in df.columns:
-        df[column] = df[column].apply(lambda x: os.path.join(cfg.FOLDER, x))
-    data = tf.data.Dataset.from_tensor_slices(dict(df))
-    return data.map(load_pathes).map(decode_imges).map(resize_imges).map(normalize_val_image).batch(batch_size).repeat()
+            if self.resize:
+                sourceImg1 = cv2.resize(sourceImg1, (self.imgSzie, self.imgSzie))
+                sourceImg2 = cv2.resize(sourceImg2, (self.imgSzie, self.imgSzie))
+                clearImg = cv2.resize(clearImg, (self.imgSzie, self.imgSzie))
+            if self.use_dataTransform:
+                sourceImg1 = self.transform(sourceImg1)
+                sourceImg2 = self.transform(sourceImg2)
+                clearImg = self.transform(clearImg)
+
+            
+            return {'source_1':sourceImg1, 'source_2':sourceImg2, 'full_clear':clearImg}
+
+        if self.phase == "valid":
+            # source image1
+            sourceImg1_dirPath = os.path.join(self.datasetPath, "source_1")
+            sourceImg1_names = os.listdir(sourceImg1_dirPath)
+            sourceImg1_names.sort()
+            sourceImg1_path = os.path.join(sourceImg1_dirPath, sourceImg1_names[index])
+            sourceImg1 = cv2.imread(sourceImg1_path)
+
+            # source image2
+            sourceImg2_dirPath = os.path.join(self.datasetPath, "source_2")
+            sourceImg2_names = os.listdir(sourceImg2_dirPath)
+            sourceImg2_names.sort()
+            sourceImg2_path = os.path.join(sourceImg2_dirPath, sourceImg2_names[index])
+            sourceImg2 = cv2.imread(sourceImg2_path)
+
+            if self.resize:
+                sourceImg1 = cv2.resize(sourceImg1, (self.imgSzie, self.imgSzie))
+                sourceImg2 = cv2.resize(sourceImg2, (self.imgSzie, self.imgSzie))
+            if self.use_dataTransform:
+                sourceImg1 = self.transform(sourceImg1)
+                sourceImg2 = self.transform(sourceImg2)
+
+            return {'source_1':sourceImg1, 'source_2':sourceImg2}
