@@ -2,6 +2,7 @@ import torch
 from torch import nn as nn
 from torch.nn import functional as F
 import numpy as np
+from torchvision.transforms.functional import rgb_to_grayscale
 
 from .loss_util import weighted_loss
 
@@ -56,10 +57,11 @@ class L1Loss(nn.Module):
 
 
 class EdgeLoss(nn.Module):
-    def __init__(self,loss_weight=1.0, reduction='mean'):
+    def __init__(self,loss_weight=1.0, reduction='mean', channels=3):
         super(EdgeLoss, self).__init__()
+        self.channels = channels
         k = torch.Tensor([[.05, .25, .4, .25, .05]])
-        self.kernel = torch.matmul(k.t(),k).unsqueeze(0).repeat(3,1,1,1).cuda() 
+        self.kernel = torch.matmul(k.t(),k).unsqueeze(0).repeat(channels,1,1,1).cuda() 
 
 
         self.weight = loss_weight
@@ -79,6 +81,9 @@ class EdgeLoss(nn.Module):
         return diff
 
     def forward(self, x, y,weight=None, **kwargs):
+        if self.channels == 1:
+            x = rgb_to_grayscale(x)
+            y = rgb_to_grayscale(y)
         loss = l1_loss(self.laplacian_kernel(x), self.laplacian_kernel(y))
         return loss*self.weight
 

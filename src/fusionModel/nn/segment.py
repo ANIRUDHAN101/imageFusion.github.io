@@ -105,6 +105,7 @@ class SpatialFrequency(nn.Module):
 
         # get decision map
         bimap = torch.nn.functional.softmax(f1_sf - f2_sf, dim=1)
+        # bimap = torch.nn.functional.softmax(10 * (f1_sf - f2_sf), dim=1)
         return bimap
     
 class DecoderBlock(nn.Module):
@@ -242,7 +243,7 @@ class SegmentFocus(nn.Module):
         self.encoder_blocks = nn.ModuleList()
         self.decoder_blocks = nn.ModuleList()
 
-        self.aspp = ASPP(in_channels=feature_dim[0], out_channels=feature_dim[0], dilation_rates=[2, 4, 8])
+        # self.aspp = ASPP(in_channels=feature_dim[0], out_channels=feature_dim[0], dilation_rates=[2, 4, 8])
 
         for i in range(1, len(feature_dim)):
             self.encoder_blocks.append(EncoderBLock(in_channels = feature_dim[i-1], 
@@ -347,8 +348,8 @@ class SegmentFocus(nn.Module):
         masked_gt_image = gt_image*gt_mask[:,1:2]
         
         fused_image = focus_regions[:,0:1]*image1 + focus_regions[:,1:2]*masked_gt_image + focus_regions[:,2:3]*image2
-
-        return fused_image, focus_regions.data
+        return fused_image, focus_regions.data, None
+        # return fused_image, focus_regions.data, (list(map(lambda x: x.data, image1_features)))
 
 class GACNFuseNet(nn.Module):
     """

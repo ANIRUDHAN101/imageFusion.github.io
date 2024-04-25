@@ -11,7 +11,7 @@ import albumentations as A
 import torch
 from src.dataset.train_val import create_split
 from src.dataset.coco_dataset import COCODataset
-from src.dataset.test import val_data 
+from src.dataset.test import MFI_Dataset 
 from src.fusionModel.dataSimulation.algorithm.util.gaussianBlur import RandomGaussianBlur
 from config.data_pipeline_config import get_train_val_pipeline_config
 from utils.data import save_data_plots
@@ -25,74 +25,68 @@ from src.loss.losses import FFTLoss, EdgeLoss, MSELoss
 from torch import optim
 from torchvision.utils import make_grid
 from torch.utils.data import DataLoader
-
+from train_step import train_step
+from val_step import val_step
 from torch.utils.tensorboard import SummaryWriter
+from src.dataset.get_dataset import train, val, test
+import pathlib
 
 IMAGE_SIZE = 128
 MULTIPLE_BLUR_CHOICES = 5
 
+exp_name = 'segment_focus_v5'
+OUT_DIR = '/home/anirudhan/project/image-fusion/experiments'
 torch.set_float32_matmul_precision('medium')
 torch.backends.cudnn.benchmark = True
 
-train_val_cfg = get_train_val_pipeline_config()
+pathlib.Path(f'{OUT_DIR}/{exp_name}/checkpoints').mkdir(parents=True, exist_ok=True)
+pathlib.Path(f'{OUT_DIR}/{exp_name}/logs').mkdir(parents=True, exist_ok=True)
 
-options = tf.data.Options()
-options.threading.private_threadpool_size = 48
+CHECKPOINT_PATH = f'{OUT_DIR}/{exp_name}/checkpoints'
+LOG_PATH = f'{OUT_DIR}/{exp_name}/logs'
 
-output_folder = '/home/anirudhan/project/image-fusion/results/plots/data' 
-train_dataset_path = '/home/anirudhan/project/image-fusion/data/memmaps/train_images100.tfrecords.gz'
-split = 'train'
-
-rand_gausian_blur = RandomGaussianBlur(10, 'cpu')
-train_data_iter = COCODataset(
-    data_dir='/home/anirudhan/project/image-fusion/data/coco/images/train2017',
-    mask_dir='/home/anirudhan/project/image-fusion/data/coco/images/train_2017mask', 
-    simulation=rand_gausian_blur,
-    multiple_blur_choices=MULTIPLE_BLUR_CHOICES,
-    crop_size=128, need_crop=False, need_rotate=True, need_flip=True)
-
-train_dataloader = DataLoader(train_data_iter, batch_size=20, shuffle=True, persistent_workers=True, num_workers=16, pin_memory=True, prefetch_factor=2)
-
-
-
-
-train_val_cfg.COMPRESSION = 'GZIP'
-val_dataset_path = '/home/anirudhan/project/image-fusion/data/memmaps/val_images.tfrecords.gz'
-split = 'val'
-val_dataset, no_train_samples = create_split(val_dataset_path, 20, split, cfg=train_val_cfg)
-val_dataset = val_dataset.as_numpy_iterator()
-
-
-# dataloader 
-test_cfg = get_test_pipeline_config()
-
-test_dataset= val_data('/home/anirudhan/project/image-fusion/data/RealMFF/data.csv', batch_size=2).as_numpy_iterator()
-save_data_plots(test_dataset, output_folder, 'test', no_samples=4)
-
-
-def numpy_to_torch(data):
-    return dict(map(lambda item: (item[0], torch.from_numpy(item[1].copy()).permute(0, 3, 1, 2)), data.items()))
-
-
-val_data_iter = map(numpy_to_torch, val_dataset)
-test_data_iter = map(numpy_to_torch, test_dataset)
+train_data_iter = train(data='coco', batch_ize=8)
+val_data_iter = val(batch_size=8)
+test_data_iter = test(dataset='RealMFF', batch_size=20)
 
 # model
 start_step = 0
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = SegmentFocus([16, 16, 32, 32], 16)
+model = SegmentFocus([4, 4, 4, 4, 4], 2)
 model = model.to(device)
 opt_model = model
 opt_model = torch.compile(model)
-opt_model.load_state_dict(torch.load(f'/home/anirudhan/project/image-fusion/results/checkpoints/model_{start_step}.pth')['model_state_dict'])
+# opt_model.load_state_dict(torch.load(f'{CHECKPOINT_PATH}/model_{39}.pth')['model_state_dict'])
 # dummpy_out = model(torch.randn((1,3,12
+# Pytorch hooks for model debuging
+# activation = {}
+# def getActivation(name):
+#     def hook(model, input, output):
+#         activation[name] = output
+#     return hook
+
+# encoder_hooks = []
+# decoder_hooks = []
+# encoder_hooks.append(opt_model.initial_feature_extractor(getActivation('initial_feature_extractor')))
+# encoder_hooks.append(opt_model.encoder_blocks[0](getActivation('encoder1')))
+# encoder_hooks.append(opt_model.encoder_blocks[1](getActivation('encoder2')))
+# encoder_hooks.append(opt_model.encoder_blocks[2](getActivation('encoder3')))
+# encoder_hooks.append(opt_model.encoder_blocks[3](getActivation('encoder4')))
+# encoder_hooks.append(opt_model.encoder_blocks[4](getActivation('encoder5')))
+# decoder_hooks.append(opt_model.decoder_blocks[0](getActivation('decoder1')))
+# decoder_hooks.append(opt_model.decoder_blocks[1](getActivation('decoder2')))
+# decoder_hooks.append(opt_model.decoder_blocks[2](getActivation('decoder3')))
+# decoder_hooks.append(opt_model.decoder_blocks[3](getActivation('decoder4')))
+
+# decoder_hooks.append(opt_model.output_conv_final(getActivation('output_conv_final')))
+# decoder_hooks.append(opt_model.guided_filter(getActivation('guided_filter')))
 
 # Training
 
-train_step = 200
-grad_acc = 1
+train_steps = 150
+grad_acc = 24
 
-val_step = 5
+val_steps = 5
 diffusion_mask_w = 0.5
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -101,67 +95,39 @@ optimizer = optim.Adam(opt_model.parameters(), lr=0.0001, weight_decay=weight_de
 
 criterion1 = MSELoss().to(device)
 criterion2 = FFTLoss().to(device)
-criterion3 = EdgeLoss().to(device)
-grad_acc = 2
+criterion3 = EdgeLoss(channels=3).to(device)
+grad_acc = 3
 
 opt_model.train()
-writer = SummaryWriter('/home/anirudhan/project/image-fusion/results/logs')
-CHECKPOINT_PATH = '/home/anirudhan/project/image-fusion/results/checkpoints'
+writer = SummaryWriter(LOG_PATH)
 #%%
 for epoch in range(start_step+1, 300):
     train_loss = 0
     val_loss = 0
     opt_model.train()
     for i, data in enumerate(train_data_iter):
-        data['mask'] = check_and_replace_nan(data['mask'])
-        # mask = mask_to_one_hot(data['mask'][:,0,:,:]).to(device)
-        mask = mask_to_multiclass(data['mask'], num_classes=3).to(device)
-        # mask = data['mask'].to(device)
-        gt_image = data['image'].to(device)
-        image1 = data['input_img_1'].to(device)
-        image2 = data['input_img_2'].to(device)
-        # optimizer.zero_grad()
-        output, output_mask = opt_model(image1, image2, gt_image, mask)
-        loss = .3*criterion1(output, gt_image) + .3*criterion2(output, gt_image) + .3*criterion3(output, gt_image) 
-        loss.backward()
-        # optimizer.step()
-        train_loss += loss.item()
+        model, optimizer, train_loss = train_step(data, opt_model, [criterion1, criterion2, criterion3], None, optimizer, grad_acc, start_step, writer, device)
 
         if i % grad_acc == 0:
             # print(f"Epoch {epoch+1}, Batch {i+1}, Loss: {loss.item()}")
             optimizer.step()
             optimizer.zero_grad()
 
+        if i % train_steps == 0 and i != 0: break
 
-        if i % train_step == 0 and i != 0: break
+    val_loss = val_step(val_data_iter, opt_model, [criterion1, criterion2, criterion3], None, val_steps, epoch, writer, device)
 
-    opt_model.eval()
-    with torch.no_grad():
-        for i, data in enumerate(val_data_iter):
-            data['mask'] = check_and_replace_nan(data['mask'])
-            # mask = mask_to_one_hot(data['mask'][:,0,:,:]).to(device)
-            mask = mask_to_multiclass(data['mask'], num_classes=3).to(device)
-            # mask = data['mask'].to(device)
-            gt_image = data['image'].to(device)
-            output, output_mask = opt_model(data['input_img_1'].to(device), data['input_img_2'].to(device), gt_image, mask)
-            loss = .3*criterion1(output, gt_image) + .3*criterion2(output, gt_image) + .3*criterion3(output, gt_image)
-            val_loss += loss.item()
-            if i % val_step == 0 and i != 0: break
-    writer.add_scalar('Loss/train', train_loss/train_step, epoch)
-    writer.add_scalar('Loss/val', val_loss/val_step, epoch)
+    writer.add_scalar('Loss/train', train_loss/train_steps, epoch)
+    writer.add_scalar('Loss/val', val_loss/val_steps, epoch)
     
-    # val_visual = make_grid([output[0], mask[0]]).permute(1,2,0).cpu().numpy()
-    val_visual = torch.stack([output[0], gt_image[0], output_mask[0], mask[0]], dim=0)
-    writer.add_images('val image and predicted images', val_visual, epoch)
-
-    print(f"Epoch {epoch+1}, Train Loss: {train_loss/train_step}, Val Loss: {val_loss/val_step}")
+    print(f"Epoch {epoch+1}, Train Loss: {train_loss/train_steps}, Val Loss: {val_loss/val_steps}")
 
     torch.save(
         {
             'epoch': epoch,
             'model_state_dict': opt_model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
-            'loss': loss,
+            'loss': val_loss,
         },CHECKPOINT_PATH+f'/model_{epoch}.pth'
     )
 
