@@ -253,7 +253,7 @@ class ConvBlock(nn.Module):
         return x
 
 class CrossConvBlock(nn.Module):
-    def __init__(self, in_channels, output_channels, kernel_sizes=[3, 5, 7, 11, 15], stride=1, padding=1, bias=False):
+    def __init__(self, in_channels, output_channels, kernel_sizes=[3, 5, 7, 11, 15, 17, 21], stride=1, padding=1, bias=False):
         super(CrossConvBlock, self).__init__()
         self.kernel_sizes = kernel_sizes
         self.conv_layers = nn.ModuleDict()
@@ -293,7 +293,7 @@ class CrossConvBlock(nn.Module):
         return x1_features, x2_features
     
 class FeatureExtractor(nn.Module):
-    def __init__(self, channel):
+    def __init__(self, in_channels, channel):
         super(FeatureExtractor, self).__init__()
         self.depth = len(channel) - 1
         self.conv_blocks = nn.ModuleList()
@@ -303,8 +303,8 @@ class FeatureExtractor(nn.Module):
         for i in range(self.depth):
             self.conv_blocks.append(
                 nn.Sequential(
-                    ConvBlock(channel[i], channel[i+1]),
-                    SSELayer(channel[i+1])
+                    ConvBlock(in_channels if i==0 else channel[i], channel[i+1]),
+                    # SSELayer(channel[i+1])
                 ))
 
             self.corss_conv_blocks.append(
@@ -346,17 +346,11 @@ class SegmentFocus(nn.Module):
     def __init__(self, channel: Tuple[int] = (4, 8, 16, 8, 3)):
         super(SegmentFocus, self).__init__()      
         self.depth = len(channel) - 1
-        self.J = 1
-        self.xfm = DWTForward(J=self.J, mode='reflect', wave='haar')
+        self.xfm = DWTForward(J=1, mode='reflect', wave='haar')
         
-        self.feature_extractor = nn.ModuleList()
-        self.fusion_layer = nn.ModuleList()
-        self.upsamples = nn.ModuleList()
+        self.feature_extractor = FeatureExtractor(channel)
+        self.fusion_layer = FusionBlock(channel[-1]+1, channel[-1]) 
         
-        for j in range(self.J):
-            self.feature_extractor.append(FeatureExtractor([3, *channel[1:]] if j!=self.J-1 else channel))
-            self.fusion_layer.append(FusionBlock(channel[-1]*2, channel[-1]))      
-
         # self.graysacle_to_channel = nn.Conv2d(1, channel[-1], kernel_size=1)
 
         self.output_conv_final = nn.Conv2d(channel[-1]*2, 3, kernel_size=3, padding=1)
@@ -375,27 +369,14 @@ class SegmentFocus(nn.Module):
     
         ll_image1, dwt_image1 = self.xfm(image1_gray)
         ll_image2, dwt_image2 = self.xfm(image2_gray)
-        
-        image1_input_features = []
-        image2_input_features = []
-        for j in range(self.J):
-            if j != self.J - 1:
-                image1_input_features.append(dwt_image1[j][:, 0, :, :, :])
-                image2_input_features.append(dwt_image2[j][:, 0, :, :, :])
-                
-            else:
-                image1_input_features.append(torch.cat([ll_image1, dwt_image1[j][:, 0, :, :, :]], dim=1))
-                image2_input_features.append(torch.cat([ll_image2, dwt_image2[j][:, 0, :, :, :]], dim=1))
 
-            image1_input_features[j], image2_input_features[j] = self.feature_extractor[j](image1_input_features[j], image2_input_features[j])
+        image1_input_features = torch.cat([ll_image1, dwt_image1[0][:, 0, :, :, :]], dim=1)
+        image2_input_features = torch.cat([ll_image2, dwt_image2[0][:, 0, :, :, :]], dim=1)
 
-        # upsample feaures concatinate and fuse them
-        for j in reversed(range(1, self.J)):
-            image1_input_features[j-1] = self.fusion_layer[j](image1_input_features[j], image1_input_features[j-1])
-            image2_input_features[j-1] = self.fusion_layer[j](image2_input_features[j], image2_input_features[j-1])
+        image1_input_features, image2_input_features= self.feature_extractor(image1_input_features, image2_input_features)
         
-        image1_input_features = self.fusion_layer[0](image1_input_features[0], image1)
-        image2_input_features = self.fusion_layer[0](image2_input_features[0], image2)
+        image1_input_features = self.fusion_layer(image1_input_features, image1_gray)
+        image2_input_features = self.fusion_layer(image2_input_features, image2_gray)
 
         final_fused_features = torch.cat([image1_input_features, image2_input_features], dim=1)
         focus_regions = self.output_conv_final(final_fused_features)
@@ -409,7 +390,7 @@ class SegmentFocus(nn.Module):
         masked_gt_image = gt_image*gt_mask[:,1:2]
         
         fused_image = focus_regions[:,0:1]*image1 + focus_regions[:,1:2]*masked_gt_image + focus_regions[:,2:3]*image2
-        return fused_image, focus_regions, None
+        return fused_image, focus_regions.data, None
         # return fused_image, focus_regions.data, (list(map(lambda x: x.data, image1_features)))
 
 class GACNFuseNet(nn.Module):

@@ -34,7 +34,7 @@ class COCODataset(Dataset):
         #     shear=[-45,45],
         #     # interpolation=1,
         # )
-        A.Resize(height=256, width=256),
+        A.Resize(height=512, width=512),
         A.RandomCrop(height=self._crop_size, width=self._crop_size),
         A.Rotate(limit=45),
         # A.CenterCrop(height=1000, width=1000),

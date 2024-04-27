@@ -88,7 +88,7 @@ def train(data='coco', batch_ize=20):
             mask_dir='/home/anirudhan/project/image-fusion/data/coco/images/train_2017mask', 
             simulation=rand_gausian_blur,
             multiple_blur_choices=MULTIPLE_BLUR_CHOICES,
-            crop_size=128, need_crop=False, need_rotate=True, need_flip=True)
+            crop_size=256, need_crop=False, need_rotate=True, need_flip=True)
 
         return DataLoader(train_dataset, batch_size=batch_ize, shuffle=True, persistent_workers=True, num_workers=16, pin_memory=True, prefetch_factor=2)
     
