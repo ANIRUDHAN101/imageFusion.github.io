@@ -24,9 +24,8 @@ def train_step(data, opt_model, criterion, criterion_weight, optimizer, grad_acc
     opt_model.train()
     
     data['mask'] = check_and_replace_nan(data['mask'])
-    # mask = mask_to_one_hot(data['mask'][:,0,:,:]).to(device)
     mask = mask_to_multiclass(data['mask'], num_classes=3).to(device)
-    # mask = data['mask'].to(device)
+    mask = data['mask'].to(device)
     gt_image = data['image'].to(device)
     image1 = data['input_img_1'].to(device)
     image2 = data['input_img_2'].to(device)
@@ -35,6 +34,7 @@ def train_step(data, opt_model, criterion, criterion_weight, optimizer, grad_acc
     if criterion_weight == None:
         criterion_weight = [1/len(criterion)]*len(criterion)
     loss = sum(map(lambda f, cw: f(output, gt_image)*cw, criterion, criterion_weight))
+    # loss = criterion_weight[0]*criterion[0](output, gt_image) + criterion_weight[1]*criterion[1](output, gt_image)
     loss = loss/grad_acc
 
     loss.backward()

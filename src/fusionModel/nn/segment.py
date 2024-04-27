@@ -13,6 +13,7 @@ import cv2
 from pytorch_wavelets import DWTForward, DWTInverse # (or import DWT, IDWT)
 from torchvision.transforms.functional import rgb_to_grayscale
 from .guided_filter import GuidedFilter
+from typing import Optional, Tuple, Type
 #%%
 class EncoderBLock(nn.Module):
     """
@@ -124,8 +125,6 @@ class DecoderBlock(nn.Module):
         super(DecoderBlock, self).__init__()
         self.dim = dim
         self.depth = depth
-
-        self.spatial_freaquency_extractor = SpatialFrequency()
         
         self.conv_block = nn.Sequential(
                 nn.LazyConv2d(self.dim, kernel_size=3, padding=1, bias=False),
@@ -159,11 +158,11 @@ class DecoderBlock(nn.Module):
             self.upsample = nn.ConvTranspose2d(self.dim, self.dim, kernel_size=(2, 2), stride=(2, 2), bias=False)
 
         elif upsample is not None:
-            self.upsample = nn.Upsample(scale_factor=2, mode=upsample)
+            self.upsample = nn.Upsample(scale_factor=8, mode=upsample)
 
         self.dropout = nn.Dropout(0.3)
 
-    def forward(self, image1_features: torch.Tensor, image2_features: torch.Tensor, prev_features: torch.Tensor):
+    def forward(self, spatial_fused_features: torch.Tensor, prev_features: torch.Tensor):
         """
         Perform forward pass through the decoder block.
         
@@ -177,8 +176,6 @@ class DecoderBlock(nn.Module):
         """
         # image1_features = self.normalize(image1_features)
         # image2_features = self.normalize(image2_features)
-
-        spatial_fused_features = self.spatial_freaquency_extractor(image1_features, image2_features)
 
         if prev_features is not None:
             if spatial_fused_features.shape[2:] != prev_features.shape[2:]:
@@ -201,7 +198,6 @@ class DecoderBlock(nn.Module):
 
         return spatial_fused_features
     
-
 class ASPP(nn.Module):
     def __init__(self, in_channels, out_channels, dilation_rates):
         super(ASPP, self).__init__()
@@ -226,120 +222,185 @@ class ASPP(nn.Module):
         x = torch.cat([block(x) for block in self.aspp_blocks], dim=1)
         x = torch.cat([x, self.global_context(x)], dim=1)  # Concatenate with global context
         return x
+    
+class ConvBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False):
+        super(ConvBlock, self).__init__()
 
-class SegmentFocus(nn.Module):
-    def __init__(self, feature_dim: Sequence[int], depth :int):
-        super(SegmentFocus, self).__init__()      
-        self.feature_dim = feature_dim
-        self.depth = depth
-        self.xfm = DWTForward(J=len(feature_dim), mode='zero', wave='haar')
-
-        # input channel is set to one the encoder takes images as grayscale images 
-        self.initial_feature_extractor = EncoderBLock(in_channels = 1, 
-                                                      out_channels=feature_dim[0]*2,
-                                                      depth=2,
-                                                      downsample=False
-                                                      )
-        self.encoder_blocks = nn.ModuleList()
-        self.decoder_blocks = nn.ModuleList()
-
-        # self.aspp = ASPP(in_channels=feature_dim[0], out_channels=feature_dim[0], dilation_rates=[2, 4, 8])
-
-        for i in range(1, len(feature_dim)):
-            self.encoder_blocks.append(EncoderBLock(in_channels = feature_dim[i-1], 
-                                                    out_channels=feature_dim[i],
-                                                    depth=depth
-                                                    )
-                                        )
-            
-        self.decoder_blocks.append(DecoderBlock(input_dim = feature_dim[0],
-                                                dim = feature_dim[0],
-                                                depth = depth,
-                                                upsample=None
-                                                )
-                                    )
-        for i in range(1, len(feature_dim)):
-            self.decoder_blocks.append(DecoderBlock(input_dim = feature_dim[i],
-                                                    dim = feature_dim[i-1],
-                                                    depth = depth
-                                                    )
-                                        )
-        # self.output_conv_map = nn.Sequential(
-        #     nn.Conv2d(feature_dim[0], 1, kernel_size=3, padding=1),
-        # )
-
-        self.output_conv_f = nn.Sequential(
-            nn.Conv2d(feature_dim[0], feature_dim[0], kernel_size=3, padding=1, bias=False, groups=feature_dim[0]),
-            nn.Conv2d(feature_dim[0], feature_dim[0], kernel_size=3, padding=1, bias=False, groups=feature_dim[0]),
-            nn.Conv2d(feature_dim[0], feature_dim[0], kernel_size=3, padding=1, groups=feature_dim[0]),
-            nn.BatchNorm2d(feature_dim[0]),
-            nn.ReLU(),
-            nn.Conv2d(feature_dim[0], 3, kernel_size=1, padding=0),
-            # nn.Sigmoid()
+        self.conv_block1 = nn.Sequential(
+        nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding, bias=bias),
+        nn.BatchNorm2d(out_channels),
+        nn.GELU()
         )
 
+        self.conv_block2 = nn.Sequential(
+        nn.Conv2d(out_channels, out_channels, kernel_size, stride, padding, bias=bias),
+        nn.BatchNorm2d(out_channels),
+        nn.GELU()
+        )
+
+        self.conv_residual1 = nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=bias)
+        self.conv_residual2 = nn.Conv2d(out_channels, out_channels, kernel_size=1, stride=1, padding=0, bias=bias)
+
+        self.cse = CSELayer(out_channels, reduction=2)
+
+    def forward(self, x):
+        x1 = self.conv_block1(x)
+        x = self.conv_residual1(x) + x1
+        x2 = self.conv_block2(x)
+        x = self.conv_residual2(x) + x2
+        x = self.cse(x)
+        return x
+
+class CrossConvBlock(nn.Module):
+    def __init__(self, in_channels, output_channels, kernel_sizes=[3, 5, 7, 11, 15], stride=1, padding=1, bias=False):
+        super(CrossConvBlock, self).__init__()
+        self.kernel_sizes = kernel_sizes
+        self.conv_layers = nn.ModuleDict()
+        self.out_channels = len(kernel_sizes)
+        for kernel_size in kernel_sizes:
+            convs = []
+            # its an Arithamtic progression (3 +2n) , so to get no of consicutive 3x3 conv n = (kernel_size - 3 )/ 2
+            for i in range(int((kernel_size-3) / 2)-1):
+                convs.append(nn.Conv2d(in_channels, in_channels, 3, stride, padding, bias=bias))
+            convs.append(nn.Conv2d(in_channels, 1, 3, stride, padding, bias=bias))
+
+            self.conv_layers[str(kernel_size)] = nn.Sequential(
+                *convs,
+                nn.BatchNorm2d(1),
+            )
+
+        self.cse = CSELayer(self.out_channels, reduction=2)
+        self.output_conv = nn.Conv2d(self.out_channels, output_channels, kernel_size=1, stride=1, padding=0, bias=False)
+
+    def forward(self, x1, x2):
+        featues = []
+        for kernel_size in self.kernel_sizes:
+            featues.append(self.conv_layers[str(kernel_size)](x1) - self.conv_layers[str(kernel_size)](x2))
+
+        x1_features = torch.cat(featues, dim=1)
+        x2_features = -x1_features
+
+        x1_features = nn.Sigmoid()(x1_features)
+        x2_features = nn.Sigmoid()(x2_features)
+
+        x1_features = self.cse(x1_features)
+        x2_features = self.cse(x2_features)
+
+        x1_features = self.output_conv(x1_features)
+        x2_features = self.output_conv(x2_features)
+
+        return x1_features, x2_features
+    
+class FeatureExtractor(nn.Module):
+    def __init__(self, channel):
+        super(FeatureExtractor, self).__init__()
+        self.depth = len(channel) - 1
+        self.conv_blocks = nn.ModuleList()
+        self.corss_conv_blocks = nn.ModuleList()
+        self.conv_residuals = nn.ModuleList()
+
+        for i in range(self.depth):
+            self.conv_blocks.append(
+                nn.Sequential(
+                    ConvBlock(channel[i], channel[i+1]),
+                    SSELayer(channel[i+1])
+                ))
+
+            self.corss_conv_blocks.append(
+                CrossConvBlock(channel[i+1], channel[i+1])
+            )
+            self.conv_residuals.append(
+                nn.Conv2d(channel[i], channel[i+1], kernel_size=1, stride=1, padding=0, bias=False)
+            )
+        
+    def forward(self, image1_input_features, image2_input_features):
+        for i in range(self.depth):
+            image1_features = self.conv_blocks[i](image1_input_features)
+            image2_features = self.conv_blocks[i](image2_input_features)
+            # shortct connection
+            image1_input_features = self.conv_residuals[i](image1_input_features) + image1_features
+            image2_input_features = self.conv_residuals[i](image2_input_features) + image2_features
+
+            image1_coss_weight, image2_coss_weight = self.corss_conv_blocks[i](image1_input_features, image2_input_features)
+            image1_input_features = image1_input_features * image1_coss_weight
+            image2_input_features = image2_input_features * image2_coss_weight
+
+        return image1_input_features, image2_input_features
+        
+class FusionBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
+        super(FusionBlock, self).__init__()
+        self.conv_block = ConvBlock(in_channels, out_channels)
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear')
+
+    def forward(self, image1_features, image2_features):
+        if image1_features.shape[2:] != image2_features.shape[2:]:
+            image1_features = self.upsample(image1_features)
+        
+        x = torch.cat([image1_features, image2_features], dim=1)
+        x = self.conv_block(x)
+        return x
+
+class SegmentFocus(nn.Module):
+    def __init__(self, channel: Tuple[int] = (4, 8, 16, 8, 3)):
+        super(SegmentFocus, self).__init__()      
+        self.depth = len(channel) - 1
+        self.J = 1
+        self.xfm = DWTForward(J=self.J, mode='reflect', wave='haar')
+        
+        self.feature_extractor = nn.ModuleList()
+        self.fusion_layer = nn.ModuleList()
+        self.upsamples = nn.ModuleList()
+        
+        for j in range(self.J):
+            self.feature_extractor.append(FeatureExtractor([3, *channel[1:]] if j!=self.J-1 else channel))
+            self.fusion_layer.append(FusionBlock(channel[-1]*2, channel[-1]))      
+
+        # self.graysacle_to_channel = nn.Conv2d(1, channel[-1], kernel_size=1)
+
+        self.output_conv_final = nn.Conv2d(channel[-1]*2, 3, kernel_size=3, padding=1)
+        
         self.self_guideding_filter_layer = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.GELU(),
-            nn.Conv2d(64, 64, kernel_size=1, bias=False),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(3, 64, kernel_size=1),
             nn.GELU(),
             nn.Conv2d(64, 3, kernel_size=1),
         )
 
         self.guided_filter = GuidedFilter(10, 0.1)
 
-        # self.output_conv_d = nn.Sequential(
-        #     nn.Conv2d(1, 1, kernel_size=1, padding=0),
-        #     nn.Sigmoid()
-        # )
-
-
-        
     def forward(self, image1, image2, gt_image, gt_mask):
         image1_gray = rgb_to_grayscale(image1)
         image2_gray = rgb_to_grayscale(image2)
+    
+        ll_image1, dwt_image1 = self.xfm(image1_gray)
+        ll_image2, dwt_image2 = self.xfm(image2_gray)
         
-        image1_initial_features = self.initial_feature_extractor(image1_gray)
-        image2_initial_features = self.initial_feature_extractor(image2_gray)
+        image1_input_features = []
+        image2_input_features = []
+        for j in range(self.J):
+            if j != self.J - 1:
+                image1_input_features.append(dwt_image1[j][:, 0, :, :, :])
+                image2_input_features.append(dwt_image2[j][:, 0, :, :, :])
+                
+            else:
+                image1_input_features.append(torch.cat([ll_image1, dwt_image1[j][:, 0, :, :, :]], dim=1))
+                image2_input_features.append(torch.cat([ll_image2, dwt_image2[j][:, 0, :, :, :]], dim=1))
 
+            image1_input_features[j], image2_input_features[j] = self.feature_extractor[j](image1_input_features[j], image2_input_features[j])
 
-        image1_features = [image1_initial_features[:, :self.feature_dim[0]]]
-        image2_features = [image2_initial_features[:, :self.feature_dim[0]]]
-
-        # image1_features[0] = self.aspp(image1_features[0])
-        # image2_features[0] = self.aspp(image2_features[0])
-
-        _, dwt_image1 = self.xfm(image1)
-        _, dwt_image2 = self.xfm(image2)
+        # upsample feaures concatinate and fuse them
+        for j in reversed(range(1, self.J)):
+            image1_input_features[j-1] = self.fusion_layer[j](image1_input_features[j], image1_input_features[j-1])
+            image2_input_features[j-1] = self.fusion_layer[j](image2_input_features[j], image2_input_features[j-1])
         
-        for i in range(len(self.feature_dim)-1):
-            image1_features.append(self.encoder_blocks[i](image1_features[i], dwt_image1[i][:, 0, :, :, :]))
-            image2_features.append(self.encoder_blocks[i](image2_features[i], dwt_image2[i][:, 0, :, :, :]))
-        
-        fused_features = None
+        image1_input_features = self.fusion_layer[0](image1_input_features[0], image1)
+        image2_input_features = self.fusion_layer[0](image2_input_features[0], image2)
 
-        for i in reversed(range(len(self.feature_dim)-1)):
-            fused_features = self.decoder_blocks[i+1](image1_features[i+1], image2_features[i+1], fused_features)
-        
-        # to extract global features from images using aspp
-        # image1_features = self.aspp(image1_initial_features[:, self.feature_dim[0]:])
-        # image2_features = self.aspp(image1_initial_features[:, self.feature_dim[0]:])
+        final_fused_features = torch.cat([image1_input_features, image2_input_features], dim=1)
+        focus_regions = self.output_conv_final(final_fused_features)
 
-        fused_features = torch.cat((image1_initial_features[:, self.feature_dim[0]:], image1_initial_features[:, self.feature_dim[0]:]), dim=1)
-        fused_features = self.decoder_blocks[0](image1_features[0], image2_features[0], fused_features)
-
-        # fused_features = self.output_conv_map(fused_features) 
-
-        focus_regions = self.output_conv_f(fused_features)
-        
-        # diffusion_regions = self.output_conv_d(fused_features)
-
-        # diffusion_regions = diffusion_regions*(1-focus_regions) + diffusion_regions*focus_regions
-        
-        # fused_image = focus_regions*image1 + (1-focus_regions)*image2
-        # focus_regions[:,2] = 1 - focus_regions[:,0] - focus_regions[:,1]
+        # fusion of features
         focus_regions = f.softmax(focus_regions, dim=1)
         g = self.self_guideding_filter_layer(focus_regions)
         focus_regions = self.guided_filter(g, focus_regions)
@@ -348,7 +409,7 @@ class SegmentFocus(nn.Module):
         masked_gt_image = gt_image*gt_mask[:,1:2]
         
         fused_image = focus_regions[:,0:1]*image1 + focus_regions[:,1:2]*masked_gt_image + focus_regions[:,2:3]*image2
-        return fused_image, focus_regions.data, None
+        return fused_image, focus_regions, None
         # return fused_image, focus_regions.data, (list(map(lambda x: x.data, image1_features)))
 
 class GACNFuseNet(nn.Module):
@@ -382,7 +443,7 @@ class GACNFuseNet(nn.Module):
         self.squeeze_features = self.conv_block(64, 1, name="feature_squeeze")
         # self.guided_filter = GuidedFilter(3, 0.1)
         # self.gaussian = GaussBlur(8, 4)
-   
+
     @staticmethod
     def conv_block(in_channels, out_channels, kernel_size=3, relu=True, batchnorm=True, name=None):
         """
@@ -504,7 +565,9 @@ class SSELayer(nn.Module):
     def __init__(self, channel):
         super(SSELayer, self).__init__()
         self.fc = nn.Sequential(
-            nn.Conv2d(channel, 1, kernel_size=7, bias=False, padding=[3, 3]),
+            nn.Conv2d(channel, channel, kernel_size=3, bias=False, padding=[1, 1]),
+            nn.Conv2d(channel, channel, kernel_size=3, bias=False, padding=[1, 1]),
+            nn.Conv2d(channel, 1, kernel_size=3, bias=False, padding=[1, 1]),
             nn.Sigmoid(),
         )
 
@@ -532,15 +595,16 @@ class CSELayer(nn.Module):
     
 #%%
 # Create an instance of the SegmentFocus model
-model = SegmentFocus(feature_dim=[16, 16], depth=2)
+# model = SegmentFocus().cuda()
 
-# Create a dummy input
-image1 = torch.randn(1, 3, 256, 256)  # Assuming input image size is 256x256
-image2 = torch.randn(1, 3, 256, 256)
-gt_image = torch.randn(1, 3, 256, 256)
-gt_mask = torch.randn(1, 3, 256, 256)
-# Pass the dummy input through the model
-output = model(image1, image2, gt_image, gt_mask)
+# # Create a dummy input
+# image1 = torch.randn(1, 3, 256, 256).cuda()  # Assuming input image size is 256x256
+# image2 = torch.randn(1, 3, 256, 256).cuda()
+# gt_image = torch.randn(1, 3, 256, 256).cuda()
+# gt_mask = torch.randn(1, 3, 256, 256).cuda()
+# # Pass the dummy input through the model
+# output = model(image1, image2, gt_image, gt_mask)
 
-# Print the output
-print(output)
+# # Print the output
+# print(output)
+# # %%

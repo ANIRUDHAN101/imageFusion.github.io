@@ -47,16 +47,16 @@ LOG_PATH = f'{OUT_DIR}/{exp_name}/logs'
 
 train_data_iter = train(data='coco', batch_ize=8)
 val_data_iter = val(batch_size=8)
-test_data_iter = test(dataset='RealMFF', batch_size=20)
+# test_data_iter = test(dataset='RealMFF', batch_size=20)
 
 # model
 start_step = 0
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = SegmentFocus([4, 4, 4, 4, 4], 2)
+model = SegmentFocus()
 model = model.to(device)
 opt_model = model
 opt_model = torch.compile(model)
-# opt_model.load_state_dict(torch.load(f'{CHECKPOINT_PATH}/model_{39}.pth')['model_state_dict'])
+# opt_model.load_state_dict(torch.load(f'{CHECKPOINT_PATH}/model_{36}.pth')['model_state_dict'])
 # dummpy_out = model(torch.randn((1,3,12
 # Pytorch hooks for model debuging
 # activation = {}
@@ -93,9 +93,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 weight_decay = 0.0001
 optimizer = optim.Adam(opt_model.parameters(), lr=0.0001, weight_decay=weight_decay)
 
-criterion1 = MSELoss().to(device)
+
+# criterion1 = GALoss().to(device)
 criterion2 = FFTLoss().to(device)
-criterion3 = EdgeLoss(channels=3).to(device)
+criterion3 = MSELoss().to(device)
+criterion1 = EdgeLoss(channels=3).to(device)
+criterions = [criterion1, criterion2, criterion3]
+criterion_weights = [0.333, 0.333, 0.333]
+
 grad_acc = 3
 
 opt_model.train()
@@ -106,7 +111,7 @@ for epoch in range(start_step+1, 300):
     val_loss = 0
     opt_model.train()
     for i, data in enumerate(train_data_iter):
-        model, optimizer, train_loss = train_step(data, opt_model, [criterion1, criterion2, criterion3], None, optimizer, grad_acc, start_step, writer, device)
+        model, optimizer, train_loss = train_step(data, opt_model, criterions, criterion_weights, optimizer, grad_acc, start_step, writer, device)
 
         if i % grad_acc == 0:
             # print(f"Epoch {epoch+1}, Batch {i+1}, Loss: {loss.item()}")
@@ -115,7 +120,7 @@ for epoch in range(start_step+1, 300):
 
         if i % train_steps == 0 and i != 0: break
 
-    val_loss = val_step(val_data_iter, opt_model, [criterion1, criterion2, criterion3], None, val_steps, epoch, writer, device)
+    val_loss = val_step(val_data_iter, opt_model, criterions, criterion_weights, val_steps, epoch, writer, device)
 
     writer.add_scalar('Loss/train', train_loss/train_steps, epoch)
     writer.add_scalar('Loss/val', val_loss/val_steps, epoch)

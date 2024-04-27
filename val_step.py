@@ -15,6 +15,7 @@ def val_step(val_data_iter, opt_model, criterion, criterion_weight, steps, epoch
             if criterion_weight == None:
                 criterion_weight = [1/len(criterion)]*len(criterion)
             loss = sum(map(lambda f, cw: f(output, gt_image)*cw, criterion, criterion_weight))
+            # loss = criterion_weight[0]*criterion[0](output, gt_image) + criterion_weight[1]*criterion[1](output, gt_image)
             val_loss += loss.item()
             if i % steps == 0 and i != 0: break
 
