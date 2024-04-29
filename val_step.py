@@ -20,7 +20,7 @@ def val_step(val_data_iter, opt_model, criterion, criterion_weight, steps, epoch
             if i % steps == 0 and i != 0: break
 
 
-    val_visual = torch.stack([output[0], gt_image[0], output_mask[0], mask[0]], dim=0)
+    val_visual = torch.stack([output[0], gt_image[0], output_mask[0].repeat(3,1,1), mask[0]], dim=0)
     writer.add_images('val image and predicted images', val_visual, epoch)
     
     # for i in range(len(featuemaps[0])):

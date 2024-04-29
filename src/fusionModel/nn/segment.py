@@ -348,20 +348,20 @@ class SegmentFocus(nn.Module):
         self.depth = len(channel) - 1
         self.xfm = DWTForward(J=1, mode='reflect', wave='haar')
         
-        self.feature_extractor = FeatureExtractor(channel)
+        self.feature_extractor = FeatureExtractor(4, channel)
         self.fusion_layer = FusionBlock(channel[-1]+1, channel[-1]) 
         
         # self.graysacle_to_channel = nn.Conv2d(1, channel[-1], kernel_size=1)
 
-        self.output_conv_final = nn.Conv2d(channel[-1]*2, 3, kernel_size=3, padding=1)
+        self.output_conv_final = nn.Conv2d(channel[-1]*2, 1, kernel_size=3, padding=1)
         
-        self.self_guideding_filter_layer = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=1),
-            nn.GELU(),
-            nn.Conv2d(64, 3, kernel_size=1),
-        )
+        # self.self_guideding_filter_layer = nn.Sequential(
+        #     nn.Conv2d(3, 64, kernel_size=1),
+        #     nn.GELU(),
+        #     nn.Conv2d(64, 3, kernel_size=1),
+        # )
 
-        self.guided_filter = GuidedFilter(10, 0.1)
+        # self.guided_filter = GuidedFilter(10, 0.1)
 
     def forward(self, image1, image2, gt_image, gt_mask):
         image1_gray = rgb_to_grayscale(image1)
@@ -382,15 +382,19 @@ class SegmentFocus(nn.Module):
         focus_regions = self.output_conv_final(final_fused_features)
 
         # fusion of features
-        focus_regions = f.softmax(focus_regions, dim=1)
-        g = self.self_guideding_filter_layer(focus_regions)
-        focus_regions = self.guided_filter(g, focus_regions)
-        focus_regions = torch.clamp(focus_regions, 0, 1)
-
-        masked_gt_image = gt_image*gt_mask[:,1:2]
-        
-        fused_image = focus_regions[:,0:1]*image1 + focus_regions[:,1:2]*masked_gt_image + focus_regions[:,2:3]*image2
+        focus_regions = f.sigmoid(10*focus_regions)
+        fused_image = focus_regions*image1 + (1 - focus_regions)*image2
         return fused_image, focus_regions.data, None
+    
+        # focus_regions = f.softmax(focus_regions, dim=1)
+        # g = self.self_guideding_filter_layer(focus_regions)
+        # focus_regions = self.guided_filter(g, focus_regions)
+        # focus_regions = torch.clamp(focus_regions, 0, 1)
+
+        # masked_gt_image = gt_image*gt_mask[:,1:2]
+        
+        # fused_image = focus_regions[:,0:1]*image1 + focus_regions[:,1:2]*masked_gt_image + focus_regions[:,2:3]*image2
+        # return fused_image, focus_regions.data, None
         # return fused_image, focus_regions.data, (list(map(lambda x: x.data, image1_features)))
 
 class GACNFuseNet(nn.Module):

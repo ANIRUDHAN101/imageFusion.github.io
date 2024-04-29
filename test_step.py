@@ -53,12 +53,12 @@ def test_step(model, dataset, device, val_data, exp_name):
 #%%
 from src.fusionModel.nn.segment import SegmentFocus
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = SegmentFocus([32, 32, 32, 32, 32], 2)
+model = SegmentFocus()
 model = model.to(device)
 opt_model = model
 opt_model = torch.compile(model)
-opt_model.load_state_dict(torch.load(f'/home/anirudhan/project/image-fusion/experiments/segment_focus_v4/checkpoints/model_97.pth')['model_state_dict'])
+opt_model.load_state_dict(torch.load(f'/home/anirudhan/project/image-fusion/experiments/segment_focus_v6/checkpoints/model_57.pth')['model_state_dict'])
 
-test_step(opt_model, dataset=test('Lytro', batch_size=1), device=device, val_data='Lytro', exp_name='segment_focus_v4')
+test_step(opt_model, dataset=test('MFFW', batch_size=1), device=device, val_data='MFFW', exp_name='segment_focus_v6')
 
 # %%

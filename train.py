@@ -34,7 +34,7 @@ import pathlib
 IMAGE_SIZE = 128
 MULTIPLE_BLUR_CHOICES = 5
 
-exp_name = 'segment_focus_v5'
+exp_name = 'segment_focus_v7'
 OUT_DIR = '/home/anirudhan/project/image-fusion/experiments'
 torch.set_float32_matmul_precision('medium')
 torch.backends.cudnn.benchmark = True
@@ -52,7 +52,7 @@ val_data_iter = val(batch_size=8)
 # model
 start_step = 0
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = SegmentFocus()
+model = SegmentFocus((32, 16, 16, 8, 3))
 model = model.to(device)
 opt_model = model
 opt_model = torch.compile(model)
