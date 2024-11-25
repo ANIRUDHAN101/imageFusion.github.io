@@ -52,8 +52,3 @@ This work was presented at the **5th International Conference on Data Science an
 
 ---
 
-## **How to Use**  
-1. Clone the repository:  
-   ```bash
-   git clone https://github.com/your-username/multi-focus-image-fusion.git
-   cd multi-focus-image-fusion
