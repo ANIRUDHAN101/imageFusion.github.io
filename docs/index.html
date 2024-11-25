@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Multi-Focus Image Fusion</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Multi-Focus Image Fusion Using Deep Learning</h1>
+    <p>A novel approach to image fusion, presented at the 5th International Conference on Data Science and Applications (ICDSA 2024).</p>
+  </header>
+
+  <nav>
+    <a href="#introduction">Introduction</a>
+    <a href="#methodology">Methodology</a>
+    <a href="#results">Results</a>
+    <a href="#contact">Contact</a>
+  </nav>
+
+  <main>
+    <section id="introduction">
+      <h2>Introduction</h2>
+      <p>
+        Capturing fully focused images using a camera is often challenging due to the **defocus spread effect**, where only parts of the scene are sharp. Multi-focus image fusion addresses this by combining images of the same scene, each focused on different regions, into a single, fully focused image. This technique is crucial in fields like medical imaging, microscopy, and photography, where clarity and sharpness are vital.
+      </p>
+    </section>
+
+    <section id="methodology">
+      <h2>Methodology</h2>
+      <p>
+        This work introduces a deep-learning-based approach to multi-focus image fusion, divided into two main stages:
+      </p>
+      <ul>
+        <li><b>Feature Extraction and Transformation:</b> A custom network, <b>PDMNet</b>, is developed to enhance performance by incorporating <b>Discrete Wavelet Transform (DWT)</b>, capturing multi-scale and frequency-domain features.</li>
+        <li><b>Image Reconstruction:</b> The output embeddings from PDMNet are reconstructed into a single image, retaining focused details from all input images.</li>
+      </ul>
+      <div class="image-container">
+        <h3>PDMNet Architecture:</h3>
+        <img src="PDMNet.png" alt="PDMNet Architecture">
+      </div>
+      <div class="image-container">
+        <h3>Workflow Block Diagram:</h3>
+        <img src="blockdiagram.png" alt="Workflow Block Diagram">
+      </div>
+      <p>
+        This approach achieved a **0.061% improvement in SSIM** (Structural Similarity Index) over the state-of-the-art methods, demonstrating superior fusion quality.
+      </p>
+    </section>
+
+    <section id="results">
+      <h2>Results</h2>
+      <p>The performance of the proposed system is visualized below:</p>
+      <div class="image-container">
+        <img src="result.png" alt="Fusion Results">
+      </div>
+    </section>
+
+    <footer id="contact">
+      <h2>Contact</h2>
+      <p>For more details about this project, feel free to reach out:</p>
+      <ul>
+        <li>Email: <a href="mailto:anirudhan0ks@gmail.com">your-email@example.com</a></li>
+        <li>GitHub: <a href="https://github.com/your-username" target="_blank">https://github.com/your-username</a></li>
+      </ul>
+      <p>
+        &copy; 2024 Your Name. Presented at ICDSA 2024. Work under review.
+      </p>
+    </footer>
+  </main>
+</body>
+</html>
+
